@@ -43,8 +43,6 @@ class MusicManagerGUI:
             'ncm_universal.py',
             'fix_flac_tags_from_filename.py',
             'attach_artwork.py',
-            'check_ncm_meta.py',
-            'audit_tags.py',
             'fetch_album_info.py',
             'embed_lyrics.py'
         ]
@@ -75,16 +73,10 @@ class MusicManagerGUI:
         # Tab 3: 封面管理
         self.create_cover_tab(notebook)
 
-        # Tab 4: 元数据检查
-        self.create_meta_check_tab(notebook)
-
-        # Tab 5: 标签审计
-        self.create_audit_tab(notebook)
-
-        # Tab 6: 专辑信息抓取
+        # Tab 4: 专辑信息抓取
         self.create_album_info_tab(notebook)
 
-        # Tab 7: 歌词嵌入（新增）
+        # Tab 5: 歌词嵌入
         self.create_lyrics_embed_tab(notebook)
 
         # 状态栏
@@ -141,32 +133,37 @@ class MusicManagerGUI:
     def create_tag_tab(self, notebook):
         """创建标签修复选项卡"""
         frame = ttk.Frame(notebook)
-        notebook.add(frame, text="标签修复")
+        notebook.add(frame, text="标签修复(离线)")
 
         # 设置
-        settings_frame = ttk.LabelFrame(frame, text="标签修复设置", padding=10)
+        settings_frame = ttk.LabelFrame(frame, text="离线快速标签修复（仅FLAC）", padding=10)
         settings_frame.pack(fill='x', padx=10, pady=10)
 
+        # 说明
+        info_text = '功能说明:\n• 从文件名解析"艺人 - 歌名"格式\n• 仅支持FLAC格式\n• 完全离线操作，速度快\n• 仅写入基础标签（艺人、标题、专辑）\n• 如需完整专辑信息，请使用"专辑信息抓取(在线)"标签页'
+        ttk.Label(settings_frame, text=info_text, justify='left', foreground='blue').grid(row=0, column=0,
+                                                                                           columnspan=3, pady=5)
+
         # 音频目录
-        ttk.Label(settings_frame, text="音频文件目录:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
+        ttk.Label(settings_frame, text="音频文件目录:").grid(row=1, column=0, sticky='w', padx=5, pady=5)
         self.tag_dir = ttk.Entry(settings_frame, width=50)
-        self.tag_dir.grid(row=0, column=1, padx=5, pady=5)
+        self.tag_dir.grid(row=1, column=1, padx=5, pady=5)
         ttk.Button(settings_frame, text="选择目录",
-                   command=lambda: self.browse_dir(self.tag_dir)).grid(row=0, column=2)
+                   command=lambda: self.browse_dir(self.tag_dir)).grid(row=1, column=2)
 
         # 选项
         self.tag_overwrite = tk.BooleanVar()
         ttk.Checkbutton(settings_frame, text="覆盖已有标签",
-                        variable=self.tag_overwrite).grid(row=1, column=0, columnspan=2, sticky='w', pady=5)
+                        variable=self.tag_overwrite).grid(row=2, column=0, columnspan=2, sticky='w', pady=5)
 
-        ttk.Label(settings_frame, text="默认专辑名:").grid(row=2, column=0, sticky='w', pady=5)
+        ttk.Label(settings_frame, text="默认专辑名:").grid(row=3, column=0, sticky='w', pady=5)
         self.tag_album = ttk.Entry(settings_frame, width=30)
         self.tag_album.insert(0, "未知专辑")
-        self.tag_album.grid(row=2, column=1, sticky='w', pady=5)
+        self.tag_album.grid(row=3, column=1, sticky='w', pady=5)
 
         self.tag_dryrun = tk.BooleanVar()
         ttk.Checkbutton(settings_frame, text="试运行（只显示不修改）",
-                        variable=self.tag_dryrun).grid(row=3, column=0, columnspan=2, sticky='w', pady=5)
+                        variable=self.tag_dryrun).grid(row=4, column=0, columnspan=2, sticky='w', pady=5)
 
         # 操作按钮
         ttk.Button(frame, text="开始修复标签", command=self.start_fix_tags, width=20).pack(pady=10)
@@ -218,100 +215,42 @@ class MusicManagerGUI:
         self.cover_log = scrolledtext.ScrolledText(log_frame, height=15, wrap=tk.WORD)
         self.cover_log.pack(fill='both', expand=True)
 
-    def create_meta_check_tab(self, notebook):
-        """创建元数据检查选项卡"""
-        frame = ttk.Frame(notebook)
-        notebook.add(frame, text="元数据检查")
-
-        # 设置
-        settings_frame = ttk.LabelFrame(frame, text="NCM元数据检查", padding=10)
-        settings_frame.pack(fill='x', padx=10, pady=10)
-
-        # NCM文件选择
-        ttk.Label(settings_frame, text="NCM文件:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
-        self.meta_files = ttk.Entry(settings_frame, width=50)
-        self.meta_files.grid(row=0, column=1, padx=5, pady=5)
-        ttk.Button(settings_frame, text="选择文件",
-                   command=lambda: self.browse_file(self.meta_files, [("NCM文件", "*.ncm")])).grid(row=0, column=2)
-        ttk.Button(settings_frame, text="选择目录",
-                   command=lambda: self.browse_dir(self.meta_files)).grid(row=0, column=3)
-
-        # 操作按钮
-        ttk.Button(frame, text="检查元数据", command=self.start_check_meta, width=20).pack(pady=10)
-
-        # 结果显示
-        result_frame = ttk.LabelFrame(frame, text="检查结果", padding=10)
-        result_frame.pack(fill='both', expand=True, padx=10, pady=10)
-
-        self.meta_log = scrolledtext.ScrolledText(result_frame, height=15, wrap=tk.WORD)
-        self.meta_log.pack(fill='both', expand=True)
-
-    def create_audit_tab(self, notebook):
-        """创建标签审计选项卡"""
-        frame = ttk.Frame(notebook)
-        notebook.add(frame, text="标签审计")
-
-        # 设置
-        settings_frame = ttk.LabelFrame(frame, text="标签审计设置", padding=10)
-        settings_frame.pack(fill='x', padx=10, pady=10)
-
-        # 音频目录
-        ttk.Label(settings_frame, text="音频文件目录:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
-        self.audit_dir = ttk.Entry(settings_frame, width=50)
-        self.audit_dir.grid(row=0, column=1, padx=5, pady=5)
-        ttk.Button(settings_frame, text="选择目录",
-                   command=lambda: self.browse_dir(self.audit_dir)).grid(row=0, column=2)
-
-        # 说明
-        info_text = "审计功能会扫描目录中的所有音频文件，\n检查标签完整性并生成CSV报告文件。"
-        ttk.Label(settings_frame, text=info_text, justify='left').grid(row=1, column=0, columnspan=3, pady=10)
-
-        # 操作按钮
-        ttk.Button(frame, text="开始审计", command=self.start_audit, width=20).pack(pady=10)
-
-        # 日志
-        log_frame = ttk.LabelFrame(frame, text="审计日志", padding=10)
-        log_frame.pack(fill='both', expand=True, padx=10, pady=10)
-
-        self.audit_log = scrolledtext.ScrolledText(log_frame, height=15, wrap=tk.WORD)
-        self.audit_log.pack(fill='both', expand=True)
-
     def create_album_info_tab(self, notebook):
         """创建专辑信息抓取选项卡"""
         frame = ttk.Frame(notebook)
-        notebook.add(frame, text="专辑信息抓取")
+        notebook.add(frame, text="专辑信息抓取(在线)")
 
         # 设置
-        settings_frame = ttk.LabelFrame(frame, text="专辑信息抓取设置", padding=10)
+        settings_frame = ttk.LabelFrame(frame, text="在线完整专辑信息获取（支持多种格式）", padding=10)
         settings_frame.pack(fill='x', padx=10, pady=10)
 
+        # 说明
+        info_text = "功能说明:\n• 从网易云API获取完整的专辑信息（需要网络）\n• 支持格式：FLAC、MP3、M4A、AAC\n• 包括：专辑名、专辑艺术家、发行日期、曲目号、碟片号等\n• 同时获取LRC格式的时间轴歌词（保存为.lrc文件）\n• 优先使用NCM文件的元数据（如果提供），否则通过文件名智能搜索\n• 每个文件间隔0.5秒（避免API限流）"
+        ttk.Label(settings_frame, text=info_text, justify='left', foreground='green').grid(row=0, column=0,
+                                                                                            columnspan=3, pady=5)
+
         # 音频目录
-        ttk.Label(settings_frame, text="音频文件目录:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
+        ttk.Label(settings_frame, text="音频文件目录:").grid(row=1, column=0, sticky='w', padx=5, pady=5)
         self.album_audio_dir = ttk.Entry(settings_frame, width=50)
-        self.album_audio_dir.grid(row=0, column=1, padx=5, pady=5)
+        self.album_audio_dir.grid(row=1, column=1, padx=5, pady=5)
         ttk.Button(settings_frame, text="选择",
-                   command=lambda: self.browse_dir(self.album_audio_dir)).grid(row=0, column=2)
+                   command=lambda: self.browse_dir(self.album_audio_dir)).grid(row=1, column=2)
 
         # NCM目录（可选）
-        ttk.Label(settings_frame, text="NCM文件目录(可选):").grid(row=1, column=0, sticky='w', padx=5, pady=5)
+        ttk.Label(settings_frame, text="NCM文件目录(可选):").grid(row=2, column=0, sticky='w', padx=5, pady=5)
         self.album_ncm_dir = ttk.Entry(settings_frame, width=50)
-        self.album_ncm_dir.grid(row=1, column=1, padx=5, pady=5)
+        self.album_ncm_dir.grid(row=2, column=1, padx=5, pady=5)
         ttk.Button(settings_frame, text="选择",
-                   command=lambda: self.browse_dir(self.album_ncm_dir)).grid(row=1, column=2)
+                   command=lambda: self.browse_dir(self.album_ncm_dir)).grid(row=2, column=2)
 
         # 选项
         self.album_overwrite = tk.BooleanVar()
         ttk.Checkbutton(settings_frame, text="强制更新已有标签的文件",
-                        variable=self.album_overwrite).grid(row=2, column=0, columnspan=2, sticky='w', pady=5)
+                        variable=self.album_overwrite).grid(row=3, column=0, columnspan=2, sticky='w', pady=5)
 
         self.album_fetch_lyrics = tk.BooleanVar(value=True)
         ttk.Checkbutton(settings_frame, text="同时获取并保存歌词文件（.lrc）",
-                        variable=self.album_fetch_lyrics).grid(row=3, column=0, columnspan=2, sticky='w', pady=5)
-
-        # 说明
-        info_text = "专辑信息抓取功能说明:\n• 自动从网易云获取完整的专辑信息\n• 包括：专辑名、专辑艺术家、发行日期、曲目号等\n• 同时获取LRC格式的时间轴歌词（保存为.lrc文件）\n• 优先使用NCM文件的元数据（如果提供）\n• 否则通过文件名智能搜索"
-        ttk.Label(settings_frame, text=info_text, justify='left', foreground='gray').grid(row=4, column=0,
-                                                                                           columnspan=3, pady=10)
+                        variable=self.album_fetch_lyrics).grid(row=4, column=0, columnspan=2, sticky='w', pady=5)
 
         # 操作按钮
         ttk.Button(frame, text="开始抓取专辑信息", command=self.start_fetch_album_info, width=20).pack(pady=10)
@@ -534,61 +473,6 @@ class MusicManagerGUI:
         thread = threading.Thread(
             target=self.run_script,
             args=('attach_artwork.py', args, self.cover_log)
-        )
-        thread.daemon = True
-        thread.start()
-
-    def start_check_meta(self):
-        """开始检查元数据"""
-        if self.processing:
-            messagebox.showwarning("警告", "正在处理中，请稍候")
-            return
-
-        input_path = self.meta_files.get()
-        if not input_path:
-            messagebox.showerror("错误", "请选择NCM文件或目录")
-            return
-
-        self.meta_log.delete(1.0, tk.END)
-
-        input_path = Path(input_path)
-
-        if input_path.is_file():
-            args = [str(input_path)]
-        else:
-            ncm_files = list(input_path.glob('*.ncm'))
-            if not ncm_files:
-                self.log_message(self.meta_log, "没有找到NCM文件")
-                return
-            args = [str(f) for f in ncm_files]
-
-        self.processing = True
-        thread = threading.Thread(
-            target=self.run_script,
-            args=('check_ncm_meta.py', args, self.meta_log)
-        )
-        thread.daemon = True
-        thread.start()
-
-    def start_audit(self):
-        """开始标签审计"""
-        if self.processing:
-            messagebox.showwarning("警告", "正在处理中，请稍候")
-            return
-
-        audit_dir = self.audit_dir.get()
-        if not audit_dir:
-            messagebox.showerror("错误", "请选择音频文件目录")
-            return
-
-        args = [audit_dir]
-
-        self.audit_log.delete(1.0, tk.END)
-
-        self.processing = True
-        thread = threading.Thread(
-            target=self.run_script,
-            args=('audit_tags.py', args, self.audit_log)
         )
         thread.daemon = True
         thread.start()

@@ -1,4 +1,4 @@
-# pyNCMDUMP
+# NCM解码器--倒入Apple Music
 
 网易云音乐（NCM）文件处理工具集 —— 解码、标签修复、封面嵌入、歌词集成，完美导入 Apple Music。
 
@@ -72,7 +72,9 @@ python3 ncm_universal.py "/网易云音乐目录" -o "/解码后目录"
 
 ### 3. 修复标签
 
-**场景：** 文件名格式为"艺人 - 歌名"但缺少内嵌标签
+#### 方式一：离线快速修复（推荐用于简单场景）
+
+**场景：** 文件名格式为"艺人 - 歌名"但缺少内嵌标签，无需联网
 
 ```bash
 # 预览修改（推荐先运行）
@@ -88,11 +90,21 @@ python3 fix_flac_tags_from_filename.py "/音频目录" --overwrite
 python3 fix_flac_tags_from_filename.py "/音频目录" --default-album "我的精选集"
 ```
 
+**特点：**
+- ✅ 仅支持 FLAC 格式
+- ✅ 完全离线操作，速度快
+- ✅ 仅写入基础标签（艺人、标题、专辑）
+- ✅ 从文件名解析信息
+
 **支持的文件名分隔符：**
 - `艺人 - 歌名`（半角横线）
 - `艺人 – 歌名`（短横线）
 - `艺人 — 歌名`（长横线）
 - `艺人－歌名`（全角横线）
+
+#### 方式二：在线完整获取（推荐用于完整专辑信息）
+
+参见下方 [6. 获取完整专辑信息（在线）](#6-获取完整专辑信息在线)
 
 ### 4. 嵌入封面
 
@@ -148,31 +160,30 @@ python3 embed_lyrics.py "/音频目录"
 python3 embed_lyrics.py "/音频目录" --overwrite
 ```
 
-### 6. 获取完整专辑信息
+### 6. 获取完整专辑信息（在线）
+
+**推荐用于：** 需要完整、准确的专辑信息和歌词
 
 ```bash
 # 从网易云 API 获取专辑完整元数据
 python3 fetch_album_info.py "/音频目录" --ncm_dir "/NCM目录"
 
 # 强制更新已有标签
-python3 fetch_album_info.py "/音频目录" --overwrite
+python3 fetch_album_info.py "/音频目录" --force
+
+# 不获取歌词
+python3 fetch_album_info.py "/音频目录" --no-lyrics
 ```
 
-### 7. 标签审计
+**特点：**
+- ✅ 支持多种格式（FLAC/MP3/M4A/AAC）
+- ✅ 从网易云 API 获取官方数据
+- ✅ 完整的标签信息（专辑、发行日期、曲目号等）
+- ✅ 自动下载并保存歌词（LRC格式）
+- ⚠️ 需要网络连接
+- ⚠️ 每个文件间隔0.5秒（避免API限流）
 
-生成详细的缺失标签报告：
-
-```bash
-python3 audit_tags.py "/音频目录"
-# 输出: tag_report_YYYYMMDD_HHMMSS.csv
-```
-
-**报告内容：**
-- 缺失的标题/艺人/专辑
-- 缺失的封面
-- 文件路径和当前状态
-
-### 8. 转换为 M4A（可选）
+### 7. 转换为 M4A（可选）
 
 **推荐工具：XLD**（macOS GUI 应用）
 
@@ -320,30 +331,39 @@ python3 embed_lyrics.py "/audios" --overwrite
 
 ---
 
-### `fetch_album_info.py` — 专辑信息获取
+### `fetch_album_info.py` — 专辑信息获取（在线完整）
 
-**功能：** 从网易云 API 获取完整专辑元数据
+**功能：** 从网易云 API 获取完整专辑元数据和歌词
+
+**适用场景：** 需要完整准确的专辑信息，支持多种音频格式
 
 **参数：**
 - 第一个参数：音频目录
-- `--ncm_dir`：NCM 目录
-- `--overwrite`：强制更新已有标签
+- `--ncm_dir`：NCM 目录（可选，用于获取 musicId）
+- `--force`：强制更新已有标签
+- `--no-lyrics`：不获取歌词文件
 
 **获取字段：**
-- 专辑名称、艺人、发行日期
-- 曲目编号
-- 专辑封面
+- 专辑名称、专辑艺人、发行日期
+- 曲目编号、碟片号
+- 专辑描述
+- 歌词（保存为 .lrc 文件）
+
+**支持格式：** FLAC, MP3, M4A, MP4, AAC
 
 **示例：**
 ```bash
 python3 fetch_album_info.py "/audios" --ncm_dir "/ncm"
+python3 fetch_album_info.py "/audios" --force --no-lyrics
 ```
 
 ---
 
-### `fix_flac_tags_from_filename.py` — 文件名标签修复
+### `fix_flac_tags_from_filename.py` — 文件名标签修复（离线快速）
 
 **功能：** 从文件名解析并写入标题/艺人标签
+
+**适用场景：** FLAC 文件快速修复，无需网络，速度快
 
 **参数：**
 - 第一个参数：音频目录
@@ -355,6 +375,10 @@ python3 fetch_album_info.py "/audios" --ncm_dir "/ncm"
 - 格式：`艺人 - 歌名`（支持多种分隔符）
 - 无分隔符时视为仅标题
 
+**支持格式：** 仅 FLAC
+
+**特点：** 完全离线，仅写入基础标签（artist, title, album）
+
 **示例：**
 ```bash
 # 预览
@@ -365,54 +389,6 @@ python3 fix_flac_tags_from_filename.py "/audios"
 
 # 强制覆盖
 python3 fix_flac_tags_from_filename.py "/audios" --overwrite
-```
-
----
-
-### `audit_tags.py` — 标签审计
-
-**功能：** 扫描音频文件并生成缺失标签报告
-
-**参数：**
-- 第一个参数：音频目录
-
-**检查项：**
-- 标题（title）
-- 艺人（artist）
-- 专辑（album）
-- 封面（artwork）
-
-**输出：**
-- 终端摘要统计
-- CSV 报告：`tag_report_YYYYMMDD_HHMMSS.csv`
-
-**示例：**
-```bash
-python3 audit_tags.py "/audios"
-```
-
----
-
-### `check_ncm_meta.py` — NCM 元数据查看
-
-**功能：** 查看 NCM 文件的元数据信息
-
-**参数：**
-- NCM 文件路径（支持通配符）
-
-**显示信息：**
-- musicId
-- 标题、艺人、专辑
-- 输出格式
-- 时长
-
-**示例：**
-```bash
-# 单文件
-python3 check_ncm_meta.py "song.ncm"
-
-# 批量查看
-python3 check_ncm_meta.py "/ncm"/*.ncm
 ```
 
 ---
@@ -588,17 +564,17 @@ A: 推荐流程：
 # 1. 解码
 python3 ncm_universal.py "/ncm" -o "/decoded"
 
-# 2. 修复标签
+# 2. 离线快速修复标签（FLAC）
 python3 fix_flac_tags_from_filename.py "/decoded"
 
-# 3. 嵌入封面
+# 3. 在线获取完整专辑信息（可选，需要完整信息时使用）
+python3 fetch_album_info.py "/decoded" --ncm_dir "/ncm"
+
+# 4. 嵌入封面
 python3 attach_artwork.py --audios "/decoded" --meta_imgs "/meta"
 
-# 4. 获取歌词
-python3 fetch_lyrics.py "/decoded" --ncm_dir "/ncm"
-
-# 5. 审计
-python3 audit_tags.py "/decoded"
+# 5. 嵌入歌词（如果使用了步骤3，已自动获取.lrc文件）
+python3 embed_lyrics.py "/decoded"
 
 # 6. 转换格式（XLD GUI）
 # 7. 导入 Apple Music
@@ -611,7 +587,7 @@ python3 audit_tags.py "/decoded"
 A: 方法：
 1. 创建子目录分批处理
 2. 使用 `--dry-run` 预览后手动筛选
-3. 编辑 CSV 审计报告后针对性处理
+3. 使用音乐管理软件（如MusicBee、foobar2000）查看标签后针对性处理
 
 ---
 
