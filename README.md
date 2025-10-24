@@ -1,4 +1,4 @@
-# NCM解码器--倒入Apple Music
+# NCM解码器--导入Apple Music
 
 网易云音乐（NCM）文件处理工具集 —— 解码、标签修复、封面嵌入、歌词集成，完美导入 Apple Music。
 
