@@ -3,7 +3,6 @@ from glob import glob
 from typing import Dict, Optional
 from tqdm import tqdm
 
-# —— 写标签用 ——
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import ID3, APIC, error as ID3Error
 from mutagen.mp3 import EasyMP3
@@ -16,23 +15,19 @@ try:
     from PIL import Image
 except Exception:
     Image = None
-# —— (可选) 在线搜索 ——
 import requests
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("artwork")
 
 def build_img_index(meta_img_dir: str) -> Dict[str, str]:
-    """
-    把 meta 目录里 'track-<id>.<ext>' 形式的图片建索引；若有重复(如 (1))，取文件体积更大的那张。
-    支持 jpg/jpeg/png/webp。
-    """
+    """索引meta目录中的track-<id>图片，有重复时选择较大文件"""
     idx: Dict[str, str] = {}
     patterns = ["track-*.jpg", "track-*.jpeg", "track-*.png", "track-*.webp"]
     for pat in patterns:
         for p in glob(os.path.join(meta_img_dir, pat)):
             fn = os.path.basename(p)
-            fn = re.sub(r"\s*\(\d+\)(?=\.(jpe?g|png|webp)$)", "", fn, flags=re.I)  # 去掉(1)
+            fn = re.sub(r"\s*\(\d+\)(?=\.(jpe?g|png|webp)$)", "", fn, flags=re.I)
             m = re.match(r"track-(\d+)\.(jpe?g|png|webp)$", fn, flags=re.I)
             if not m:
                 continue
@@ -42,7 +37,6 @@ def build_img_index(meta_img_dir: str) -> Dict[str, str]:
     log.info(f"封面索引：{len(idx)} 张")
     return idx
 
-# —— 从 .ncm 取 trackId ——
 CORE_KEY = binascii.a2b_hex('687A4852416D736F356B496E62617857')
 META_KEY = binascii.a2b_hex('2331346C6A6B5F215C5D2630553C2728')
 def aes_ecb_decrypt(data: bytes, key: bytes) -> bytes:
@@ -66,23 +60,20 @@ def read_ncm_meta(ncm_path: str) -> Optional[dict]:
             key_data[i] ^= 0x64
         key_data = unpad(aes_ecb_decrypt(bytes(key_data), CORE_KEY))[17:]
 
-        # 跳到 meta 区
         meta_len = struct.unpack('<I', f.read(4))[0]
         meta_data = bytearray(f.read(meta_len))
         for i in range(len(meta_data)):
             meta_data[i] ^= 0x63
         meta_data = base64.b64decode(bytes(meta_data)[22:])
         meta = json.loads(unpad(aes_ecb_decrypt(meta_data, META_KEY)).decode("utf-8")[6:])
-        # 常见字段：musicId / musicName / artist / album 等
         return meta
 
 def find_matching_audio(decoded_dir: str, stem: str):
-    """用文件名主干匹配音频（优先 flac 其次 mp3 / m4a）"""
+    """匹配音频文件"""
     for ext in (".flac", ".mp3", ".m4a", ".alac", ".aac"):
         p = os.path.join(decoded_dir, f"{stem}{ext}")
         if os.path.exists(p):
             return p
-    # 宽松匹配：去掉空格与大小写
     norm = re.sub(r"\s+", "", stem).lower()
     for p in glob(os.path.join(decoded_dir, "*")):
         s = re.sub(r"\s+", "", os.path.splitext(os.path.basename(p))[0]).lower()
@@ -105,7 +96,6 @@ def embed_cover(audio_path: str, img_path: str):
     img_mime = _infer_mime(img_path)
     with open(img_path, "rb") as f:
         img_bytes = f.read()
-    # WEBP → PNG（若装了 Pillow）
     if img_mime == "image/webp" and Image is not None:
         try:
             from io import BytesIO
@@ -148,17 +138,14 @@ def embed_cover(audio_path: str, img_path: str):
 
 def _clean_text(s: str) -> str:
     s = unicodedata.normalize("NFKC", s or "")
-    s = re.sub(r"[（(].*?[)）]", " ", s)  # 去括号内容
-    s = re.sub(r"\b(feat\.?|with|＆|&)\b.*$", " ", s, flags=re.I)  # 去 feat 之后
-    s = re.sub(r"[~!@#$%^&*=_+\-|\\/:;,.?·，。、《》“”\"'！【】\[\]\{\}]+", " ", s)
+    s = re.sub(r"[（(].*?[)）]", " ", s)
+    s = re.sub(r"\b(feat\.?|with|＆|&)\b.*$", " ", s, flags=re.I)
+    s = re.sub(r"[~!@#$%^&*=_+\-|\\/:;,.?·，。、《》""\"'！【】\[\]\{\}]+", " ", s)
     s = re.sub(r"\s+", " ", s).strip().lower()
     return s
 
 def make_title_artist_candidates(stem: str):
-    """
-    从文件名生成 (title, artist) 候选：
-    同时尝试 “左=歌名/右=艺人” 和 “左=艺人/右=歌名”，并做基础清洗。
-    """
+    """从文件名生成标题和艺人候选"""
     s = unicodedata.normalize("NFKC", stem or "").strip()
     parts = [p.strip() for p in s.split(" - ", 1)]
     cands = []
@@ -168,10 +155,8 @@ def make_title_artist_candidates(stem: str):
 
     if len(parts) == 2:
         left, right = parts
-        # 假设1：左是“歌名”、右是“艺人”
         cands.append({"title": left,  "artist": right,
                       "title_c": _clean(left),  "artist_c": _clean(right)})
-        # 假设2：左是“艺人”、右是“歌名”
         cands.append({"title": right, "artist": left,
                       "title_c": _clean(right), "artist_c": _clean(left)})
     else:
@@ -197,9 +182,7 @@ def _req_json(url: str, data: dict, retries: int = 2) -> Optional[dict]:
                 return None
 
 def search_netease_track_id(title: str, artist: str, want_seconds: Optional[float]) -> Optional[str]:
-    """
-    先 cloudsearch 再 web 接口；生成若干候选查询串；用 rapidfuzz 对文本 + 时长评分，返回最佳 id。
-    """
+    """搜索网易云音乐track ID"""
     title_c = _clean_text(title)
     artist_c = _clean_text(artist)
     q_base = (title_c + " " + artist_c).strip()
@@ -238,20 +221,18 @@ def search_netease_track_id(title: str, artist: str, want_seconds: Optional[floa
             sc = score_candidate(name, artists, dur)
             if sc > best_score:
                 best_score, best_id = sc, str(s.get("id"))
-        if best_score >= 90:  # 够高就早停
+        if best_score >= 90:
             break
 
     cutoff = 65 if want_seconds else 75
     return best_id if best_score >= cutoff else None
 
 def guess_title_artist(stem: str):
-    # 你的文件名多为 “艺术家 - 歌名”，先粗切一刀
     parts = stem.split(" - ", 1)
     if len(parts) == 2:
         artist, title = parts
     else:
         artist, title = "", stem
-    # 去掉括号内附加信息
     title = re.sub(r"[（(].*?[)）]", "", title).strip()
     artist = artist.strip()
     title = unicodedata.normalize("NFKC", title).strip()
@@ -262,7 +243,6 @@ def main(decoded_dir: str, meta_img_dir: str, ncm_dir: Optional[str] = None):
     img_idx = build_img_index(meta_img_dir)
     done, miss = 0, []
 
-    # —— 1) 先处理有 .ncm 的 ——
     if ncm_dir and os.path.isdir(ncm_dir):
         for ncm in tqdm(glob(os.path.join(ncm_dir, "*.ncm")), desc="处理含 NCM 的文件"):
             stem = os.path.splitext(os.path.basename(ncm))[0]
@@ -283,22 +263,19 @@ def main(decoded_dir: str, meta_img_dir: str, ncm_dir: Optional[str] = None):
             else:
                 miss.append((stem, "找不到图片或音频"))
 
-    # —— 2) 再处理没有 .ncm 的：尝试在线查 ID ——
     for audio in tqdm([p for p in glob(os.path.join(decoded_dir,"*")) if os.path.splitext(p)[1].lower() in (".flac",".mp3",".m4a",".alac",".aac")],
                       desc="处理无 NCM 的音频"):
         stem = os.path.splitext(os.path.basename(audio))[0]
-        # 已经贴过封面就跳过（简单判断）
         if os.path.splitext(audio)[1].lower()==".flac":
             try:
                 if FLAC(audio).pictures:
                     continue
             except: pass
-        # 同时尝试“左=歌名/右=艺人”和“左=艺人/右=歌名”的两种顺序
         cands = make_title_artist_candidates(stem)
 
         length = None
         try:
-            length = MFile(audio).info.length  # 秒
+            length = MFile(audio).info.length
         except Exception:
             pass
 

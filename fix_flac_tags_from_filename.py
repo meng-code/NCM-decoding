@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-批量修复 FLAC 标签（仅 FLAC；MP3/M4A 不处理）
-- 从文件名解析出：艺人 - 歌名
-- 仅当标签缺失时写入（默认不覆盖已有值）
-- 可选：给缺失的专辑写入默认值
-"""
 
 import re
 import sys
@@ -14,29 +8,25 @@ from typing import Tuple, Optional
 
 from mutagen.flac import FLAC
 
-# 可能出现的分隔符（半角/全角/长短横线）
 SEPARATORS = [
-    " - ", " – ", " — ", "－", "—", "–", "-"  # 尽量把带空格的排在前面
+    " - ", " – ", " — ", "－", "—", "–", "-"
 ]
 
 def split_artist_title(stem: str) -> Optional[Tuple[str, str]]:
-    """从文件名(不含后缀)中解析出 (artist, title)"""
+    """从文件名解析艺人和标题"""
     s = stem.strip()
-    # 优先匹配带空格的“ - ”
     for sep in SEPARATORS:
         if sep in s:
             a, t = s.split(sep, 1)
             a, t = a.strip(), t.strip()
             if a and t:
                 return a, t
-    # 最后再尝试正则（防极端情况）
     m = re.match(r"(.+?)\s*-\s*(.+)", s)
     if m:
         return m.group(1).strip(), m.group(2).strip()
     return None
 
 def needs_update(value) -> bool:
-    """判断标签是否缺失或为空"""
     if value is None:
         return True
     if isinstance(value, list):
@@ -44,10 +34,6 @@ def needs_update(value) -> bool:
     return not str(value).strip()
 
 def fix_one(path: Path, overwrite: bool, default_album: Optional[str]) -> Tuple[bool, str]:
-    """
-    修复单个 FLAC
-    返回 (是否写入了任何改动, 说明)
-    """
     stem = path.stem
     parsed = split_artist_title(stem)
     if not parsed:
@@ -61,15 +47,12 @@ def fix_one(path: Path, overwrite: bool, default_album: Optional[str]) -> Tuple[
         return (False, f"读取失败: {e}")
 
     changed = False
-    # 标题
     if overwrite or needs_update(audio.get("title")):
         audio["title"] = title_from_name
         changed = True
-    # 艺人
     if overwrite or needs_update(audio.get("artist")):
         audio["artist"] = artist_from_name
         changed = True
-    # 专辑（可选）
     if default_album and (overwrite or needs_update(audio.get("album"))):
         audio["album"] = default_album
         changed = True

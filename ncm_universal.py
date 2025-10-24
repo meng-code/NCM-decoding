@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-NCM 通用解码器 - 修改版
-支持指定输入输出目录
-"""
 
 import os
 import json
@@ -15,13 +11,11 @@ from Crypto.Cipher import AES
 
 
 class NCMUniversalDecoder:
-    # 固定密钥
     CORE_KEY = binascii.a2b_hex('687A4852416D736F356B496E62617857')
     META_KEY = binascii.a2b_hex('2331346C6A6B5F215C5D2630553C2728')
 
     @staticmethod
     def unpad(s):
-        """移除PKCS7填充"""
         if not s:
             return s
         padding = s[-1] if isinstance(s[-1], int) else ord(s[-1])
@@ -30,11 +24,9 @@ class NCMUniversalDecoder:
         return s[:-padding]
 
     def detect_format(self, data):
-        """检测音频格式"""
         if len(data) < 4:
             return None
 
-        # 检查各种音频格式的魔术字节
         if data[:4] == b'fLaC':
             return 'flac'
         elif data[:3] == b'ID3':
@@ -51,7 +43,6 @@ class NCMUniversalDecoder:
         return None
 
     def try_decode_method1(self, key_box, data):
-        """方法1: 原始解密算法"""
         result = bytearray(data)
         for i in range(len(result)):
             j = (i + 1) & 0xff
@@ -59,7 +50,6 @@ class NCMUniversalDecoder:
         return bytes(result)
 
     def try_decode_method2(self, key_box, data, offset=0):
-        """方法2: 标准RC4算法"""
         result = bytearray(data)
         i = 0
         j = 0
@@ -73,11 +63,9 @@ class NCMUniversalDecoder:
         return bytes(result)
 
     def try_decode_method3(self, key_box, data):
-        """方法3: 修改版算法（可能用于新版NCM）"""
         result = bytearray(data)
 
         for i in range(len(result)):
-            # 使用不同的索引计算方式
             idx = i & 0xff
             k = key_box[idx]
             j = (k + idx) & 0xff
@@ -86,27 +74,14 @@ class NCMUniversalDecoder:
         return bytes(result)
 
     def decode(self, ncm_path, output_dir=None):
-        """
-        解码NCM文件
-
-        Args:
-            ncm_path: NCM文件路径
-            output_dir: 输出目录（如果不指定，使用源文件目录）
-
-        Returns:
-            bool: 成功或失败
-        """
         ncm_path = Path(ncm_path)
         if not ncm_path.exists() or not ncm_path.suffix == '.ncm':
             print(f"❌ 无效的NCM文件: {ncm_path}")
             return False
 
-        # 设置输出目录
         if output_dir:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-
-            # 创建debug子目录
             debug_dir = output_dir / 'debug'
             debug_dir.mkdir(exist_ok=True)
         else:
@@ -116,7 +91,6 @@ class NCMUniversalDecoder:
 
         try:
             with open(ncm_path, 'rb') as f:
-                # 1. 验证文件头
                 header = f.read(8)
                 if binascii.b2a_hex(header) != b'4354454e4644414d':
                     print(f"❌ 无效的NCM文件头")
@@ -124,10 +98,8 @@ class NCMUniversalDecoder:
 
                 print(f"处理文件: {ncm_path.name}")
 
-                # 2. 跳过2字节
                 f.seek(2, 1)
 
-                # 3. 读取并解密密钥
                 key_length = struct.unpack('<I', f.read(4))[0]
                 print(f"  密钥长度: {key_length} 字节")
 
@@ -139,7 +111,6 @@ class NCMUniversalDecoder:
                 key_data = self.unpad(cipher.decrypt(bytes(key_data)))
                 key_data = key_data[17:]
 
-                # 4. 构建密钥盒
                 key_box_original = bytearray(range(256))
                 c = 0
                 last_byte = 0
@@ -155,9 +126,8 @@ class NCMUniversalDecoder:
                     key_box_original[c] = swap
                     last_byte = c
 
-                # 5. 读取元数据
                 meta_length = struct.unpack('<I', f.read(4))[0]
-                output_format = 'mp3'  # 默认格式
+                output_format = 'mp3'
 
                 if meta_length > 0:
                     meta_data = bytearray(f.read(meta_length))
@@ -174,24 +144,20 @@ class NCMUniversalDecoder:
                     except:
                         print(f"  ⚠️ 无法解析元数据，使用默认格式")
 
-                # 6. 跳过CRC和图片
-                f.seek(4, 1)  # CRC32
-                f.seek(5, 1)  # 未知数据
+                f.seek(4, 1)
+                f.seek(5, 1)
                 image_size = struct.unpack('<I', f.read(4))[0]
                 if image_size > 0:
                     f.seek(image_size, 1)
 
-                # 7. 读取音频数据
                 audio_start = f.tell()
                 print(f"  音频起始: 0x{audio_start:x}")
 
-                # 读取前1024字节用于测试
                 test_data = f.read(1024)
                 if not test_data:
                     print(f"  ❌ 没有音频数据")
                     return False
 
-                # 8. 尝试不同的解密方法
                 print(f"  尝试解密方法...")
 
                 methods = [
@@ -222,21 +188,17 @@ class NCMUniversalDecoder:
                     print(f"  调试信息:")
                     print(f"    原始前16字节: {binascii.b2a_hex(test_data[:16])}")
 
-                    # 保存失败的文件到debug目录
                     debug_file = debug_dir / f"{ncm_path.stem}.debug"
                     with open(debug_file, 'wb') as df:
                         df.write(test_data)
                     print(f"    已保存调试文件: {debug_file}")
                     return False
 
-                # 9. 使用成功的方法解密整个文件
                 output_file = output_dir / f"{ncm_path.stem}.{output_format}"
 
                 with open(output_file, 'wb') as out:
-                    # 写入已解密的测试数据
                     out.write(decrypted_test)
 
-                    # 继续解密剩余数据
                     f.seek(audio_start + 1024)
                     key_box_copy = bytearray(key_box_original)
 
@@ -265,20 +227,12 @@ class NCMUniversalDecoder:
 
 
 def decode_directory(input_dir, output_dir=None):
-    """
-    批量解码目录中的NCM文件
-
-    Args:
-        input_dir: 输入目录
-        output_dir: 输出目录（可选）
-    """
     input_dir = Path(input_dir)
 
     if not input_dir.exists():
         print(f"❌ 输入目录不存在: {input_dir}")
         return
 
-    # 查找所有NCM文件
     ncm_files = list(input_dir.glob('*.ncm'))
     if not ncm_files:
         ncm_files = list(input_dir.rglob('*.ncm'))
