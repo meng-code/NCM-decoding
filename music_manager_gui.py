@@ -40,6 +40,7 @@ class MusicManagerGUI:
     def check_scripts(self):
         """检查必要的脚本文件是否存在"""
         required_scripts = [
+            'ncm_utils.py',          # 共享工具模块（新增）
             'ncm_universal.py',
             'fix_flac_tags_from_filename.py',
             'attach_artwork.py',

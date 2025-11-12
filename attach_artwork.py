@@ -17,6 +17,9 @@ except Exception:
     Image = None
 import requests
 
+# 导入 NCM 工具模块
+from ncm_utils import read_ncm_meta
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("artwork")
 
@@ -37,36 +40,6 @@ def build_img_index(meta_img_dir: str) -> Dict[str, str]:
     log.info(f"封面索引：{len(idx)} 张")
     return idx
 
-CORE_KEY = binascii.a2b_hex('687A4852416D736F356B496E62617857')
-META_KEY = binascii.a2b_hex('2331346C6A6B5F215C5D2630553C2728')
-def aes_ecb_decrypt(data: bytes, key: bytes) -> bytes:
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    from cryptography.hazmat.backends import default_backend
-    decryptor = Cipher(algorithms.AES(key), modes.ECB(), backend=default_backend()).decryptor()
-    return decryptor.update(data) + decryptor.finalize()
-
-def unpad(bs: bytes) -> bytes:
-    pad = bs[-1] if isinstance(bs[-1], int) else ord(bs[-1])
-    return bs[:-pad]
-
-def read_ncm_meta(ncm_path: str) -> Optional[dict]:
-    with open(ncm_path, "rb") as f:
-        if binascii.b2a_hex(f.read(8)) != b'4354454e4644414d':
-            return None
-        f.seek(2, 1)
-        key_len = struct.unpack('<I', f.read(4))[0]
-        key_data = bytearray(f.read(key_len))
-        for i in range(len(key_data)):
-            key_data[i] ^= 0x64
-        key_data = unpad(aes_ecb_decrypt(bytes(key_data), CORE_KEY))[17:]
-
-        meta_len = struct.unpack('<I', f.read(4))[0]
-        meta_data = bytearray(f.read(meta_len))
-        for i in range(len(meta_data)):
-            meta_data[i] ^= 0x63
-        meta_data = base64.b64decode(bytes(meta_data)[22:])
-        meta = json.loads(unpad(aes_ecb_decrypt(meta_data, META_KEY)).decode("utf-8")[6:])
-        return meta
 
 def find_matching_audio(decoded_dir: str, stem: str):
     """匹配音频文件"""

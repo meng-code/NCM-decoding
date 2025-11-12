@@ -22,63 +22,8 @@ from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
 
-# NCM元数据读取
-import struct
-import binascii
-import base64
-from Crypto.Cipher import AES
-
-# 固定密钥
-CORE_KEY = binascii.a2b_hex('687A4852416D736F356B496E62617857')
-META_KEY = binascii.a2b_hex('2331346C6A6B5F215C5D2630553C2728')
-
-
-def unpad(s):
-    """移除PKCS7填充"""
-    if not s:
-        return s
-    pad = s[-1] if isinstance(s[-1], int) else ord(s[-1])
-    if pad > len(s) or pad == 0:
-        return s
-    return s[:-pad]
-
-
-def read_ncm_meta(ncm_path: str) -> Optional[dict]:
-    """读取NCM文件的元数据"""
-    try:
-        with open(ncm_path, 'rb') as f:
-            # 验证文件头
-            if binascii.b2a_hex(f.read(8)) != b'4354454e4644414d':
-                return None
-            f.seek(2, 1)
-
-            # 读取并解密密钥
-            key_len = struct.unpack('<I', f.read(4))[0]
-            key_data = bytearray(f.read(key_len))
-            for i in range(len(key_data)):
-                key_data[i] ^= 0x64
-
-            cipher = AES.new(CORE_KEY, AES.MODE_ECB)
-            key_data = unpad(cipher.decrypt(bytes(key_data)))[17:]
-
-            # 跳到meta区
-            meta_len = struct.unpack('<I', f.read(4))[0]
-            if meta_len == 0:
-                return None
-
-            meta_data = bytearray(f.read(meta_len))
-            for i in range(len(meta_data)):
-                meta_data[i] ^= 0x63
-
-            meta_data = base64.b64decode(bytes(meta_data)[22:])
-            cipher = AES.new(META_KEY, AES.MODE_ECB)
-            meta_data = unpad(cipher.decrypt(meta_data))
-
-            meta = json.loads(meta_data.decode('utf-8')[6:])
-            return meta
-    except Exception as e:
-        print(f"读取NCM元数据失败: {e}")
-        return None
+# 导入 NCM 工具模块
+from ncm_utils import read_ncm_meta
 
 
 def search_song(title: str, artist: str = "") -> Optional[int]:
