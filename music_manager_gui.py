@@ -497,7 +497,11 @@ class MusicManagerGUI:
             args.extend(['--ncm_dir', ncm_dir])
 
         if self.album_overwrite.get():
-            args.append('--overwrite')
+            args.append('--force')
+
+        # 是否禁用歌词抓取（默认抓取，复选框不勾选时才禁用）
+        if not self.album_fetch_lyrics.get():
+            args.append('--no-lyrics')
 
         self.album_log.delete(1.0, tk.END)
 

@@ -258,15 +258,27 @@ def process_audio_file(audio_path: str, ncm_path: str = None, force_update: bool
     """处理单个音频文件"""
     filename = Path(audio_path).name
 
-    # 检查是否已有完整标签
+    # 判断是否需要更新标签
+    update_tags = True
     if not force_update:
         try:
             audio = MFile(audio_path)
             if audio and audio.get("album") and audio.get("artist"):
-                print(f"跳过 {filename} (已有完整标签)")
-                return True
-        except:
+                update_tags = False
+        except Exception:
             pass
+
+    # 判断是否需要抓取歌词（标签完整但 .lrc 缺失时仍然要抓）
+    lrc_path = Path(audio_path).with_suffix('.lrc')
+    need_lyrics = save_lyrics and not lrc_path.exists()
+
+    # 标签完整且不需要补歌词，直接跳过
+    if not update_tags and not need_lyrics:
+        print(f"跳过 {filename} (已有完整标签和歌词)")
+        return True
+
+    if not update_tags and need_lyrics:
+        print(f"补抓歌词 {filename} (已有完整标签)")
 
     # 首先尝试从对应的NCM文件获取信息
     song_info = None
@@ -300,34 +312,39 @@ def process_audio_file(audio_path: str, ncm_path: str = None, force_update: bool
         song_info = search_song_info(title, artist)
 
     if song_info:
-        print(f"更新 {filename}")
-        print(f"  标题: {song_info.get('title', '')}")
-        print(f"  艺术家: {song_info.get('artist', '')}")
-        print(f"  专辑: {song_info.get('album', '')}")
-        print(f"  日期: {song_info.get('date', '')}")
+        if update_tags:
+            print(f"更新 {filename}")
+            print(f"  标题: {song_info.get('title', '')}")
+            print(f"  艺术家: {song_info.get('artist', '')}")
+            print(f"  专辑: {song_info.get('album', '')}")
+            print(f"  日期: {song_info.get('date', '')}")
 
-        # 获取并保存歌词
-        if save_lyrics and song_info.get('song_id'):
+        # 获取并保存歌词（独立于标签更新逻辑）
+        if need_lyrics and song_info.get('song_id'):
             lyrics = get_lyrics(song_info.get('song_id'))
             if lyrics:
-                # 保存为独立的LRC文件
-                lrc_path = Path(audio_path).with_suffix('.lrc')
                 try:
                     with open(lrc_path, 'w', encoding='utf-8') as f:
                         f.write(lyrics)
                     print(f"  ✓ 已保存歌词: {lrc_path.name}")
-                except:
-                    print(f"  ⚠ 保存歌词失败")
+                except Exception as e:
+                    print(f"  ⚠ 保存歌词失败: {e}")
+            else:
+                print(f"  ⚠ 未找到歌词")
 
-        # 移除song_id（不需要写入标签）
+        # 移除 song_id（不需要写入标签）
         song_info.pop('song_id', None)
 
-        if update_audio_tags(audio_path, song_info):
-            print(f"  ✅ 成功")
-            return True
+        # 仅在需要时更新标签
+        if update_tags:
+            if update_audio_tags(audio_path, song_info):
+                print(f"  ✅ 成功")
+                return True
+            else:
+                print(f"  ❌ 失败")
+                return False
         else:
-            print(f"  ❌ 失败")
-            return False
+            return True
     else:
         print(f"❌ 未找到 {filename} 的信息")
         return False
