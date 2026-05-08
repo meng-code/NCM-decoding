@@ -4,3 +4,27 @@
 *.spec
 *.exe
 ncmdump
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+*.egg-info/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment files
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
