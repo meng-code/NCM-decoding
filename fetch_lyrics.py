@@ -22,8 +22,9 @@ from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
 
-# 导入 NCM 工具模块
+# 导入共享模块
 from ncm_utils import read_ncm_meta
+from filename_parser import parse_filename_as_title_artist as parse_filename
 
 
 def search_song(title: str, artist: str = "") -> Optional[int]:
@@ -208,27 +209,6 @@ def embed_lyrics_to_audio(audio_path: str, lyrics: str) -> bool:
         print(f"嵌入歌词失败: {e}")
         return False
 
-
-def parse_filename(filename: str) -> tuple:
-    """从文件名解析艺术家和标题"""
-    stem = Path(filename).stem
-
-    # 尝试分割 "艺术家 - 标题" 格式
-    patterns = [
-        r'^(.+?)\s*-\s*(.+)$',  # 标准格式
-        r'^(.+?)\s*－\s*(.+)$',  # 全角横线
-        r'^(.+?)\s*—\s*(.+)$',  # 长横线
-        r'^(.+?)\s*–\s*(.+)$',  # 短横线
-    ]
-
-    for pattern in patterns:
-        match = re.match(pattern, stem)
-        if match:
-            artist = match.group(1).strip()
-            title = match.group(2).strip()
-            return title, artist
-
-    return stem, ""
 
 
 def process_audio_file(audio_path: str, ncm_path: str = None,

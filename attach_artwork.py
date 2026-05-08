@@ -17,8 +17,13 @@ except Exception:
     Image = None
 import requests
 
-# 导入 NCM 工具模块
+# 导入共享模块
 from ncm_utils import read_ncm_meta
+from filename_parser import (
+    clean_text_for_search as _clean_text,
+    make_title_artist_candidates,
+    guess_title_artist,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("artwork")
@@ -109,33 +114,6 @@ def embed_cover(audio_path: str, img_path: str):
     else:
         raise RuntimeError(f"不支持的音频格式：{ext}")
 
-def _clean_text(s: str) -> str:
-    s = unicodedata.normalize("NFKC", s or "")
-    s = re.sub(r"[（(].*?[)）]", " ", s)
-    s = re.sub(r"\b(feat\.?|with|＆|&)\b.*$", " ", s, flags=re.I)
-    s = re.sub(r"[~!@#$%^&*=_+\-|\\/:;,.?·，。、《》""\"'！【】\[\]\{\}]+", " ", s)
-    s = re.sub(r"\s+", " ", s).strip().lower()
-    return s
-
-def make_title_artist_candidates(stem: str):
-    """从文件名生成标题和艺人候选"""
-    s = unicodedata.normalize("NFKC", stem or "").strip()
-    parts = [p.strip() for p in s.split(" - ", 1)]
-    cands = []
-
-    def _clean(s):
-        return _clean_text(s)
-
-    if len(parts) == 2:
-        left, right = parts
-        cands.append({"title": left,  "artist": right,
-                      "title_c": _clean(left),  "artist_c": _clean(right)})
-        cands.append({"title": right, "artist": left,
-                      "title_c": _clean(right), "artist_c": _clean(left)})
-    else:
-        cands.append({"title": s, "artist": "", "title_c": _clean(s), "artist_c": ""})
-
-    return cands
 
 def _req_json(url: str, data: dict, retries: int = 2) -> Optional[dict]:
     headers = {
@@ -199,18 +177,6 @@ def search_netease_track_id(title: str, artist: str, want_seconds: Optional[floa
 
     cutoff = 65 if want_seconds else 75
     return best_id if best_score >= cutoff else None
-
-def guess_title_artist(stem: str):
-    parts = stem.split(" - ", 1)
-    if len(parts) == 2:
-        artist, title = parts
-    else:
-        artist, title = "", stem
-    title = re.sub(r"[（(].*?[)）]", "", title).strip()
-    artist = artist.strip()
-    title = unicodedata.normalize("NFKC", title).strip()
-    artist = unicodedata.normalize("NFKC", artist).strip()
-    return title, artist
 
 def main(decoded_dir: str, meta_img_dir: str, ncm_dir: Optional[str] = None):
     img_idx = build_img_index(meta_img_dir)

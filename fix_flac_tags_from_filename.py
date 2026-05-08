@@ -1,30 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import re
 import sys
 from pathlib import Path
 from typing import Tuple, Optional
 
 from mutagen.flac import FLAC
 
-SEPARATORS = [
-    " - ", " – ", " — ", "－", "—", "–", "-"
-]
-
-def split_artist_title(stem: str) -> Optional[Tuple[str, str]]:
-    """从文件名解析艺人和标题"""
-    s = stem.strip()
-    for sep in SEPARATORS:
-        if sep in s:
-            a, t = s.split(sep, 1)
-            a, t = a.strip(), t.strip()
-            if a and t:
-                return a, t
-    m = re.match(r"(.+?)\s*-\s*(.+)", s)
-    if m:
-        return m.group(1).strip(), m.group(2).strip()
-    return None
+# 导入共享的文件名解析模块
+from filename_parser import parse_filename as split_artist_title
 
 def needs_update(value) -> bool:
     if value is None:

@@ -73,6 +73,63 @@ class NCMUniversalDecoder:
 
         return bytes(result)
 
+    def preflight_check(self, ncm_path):
+        """
+        文件完整性预检查
+        返回 (是否通过, 失败原因)
+        失败原因可能是：
+          - 'too_small'      文件太小，疑似下载不完整
+          - 'bad_header'     文件头损坏，疑似下载错误或文件类型错误
+          - 'truncated'      文件被截断
+          - 'invalid_struct' 结构损坏（key/meta 长度异常）
+        """
+        try:
+            file_size = os.path.getsize(ncm_path)
+
+            # NCM 文件最小约 50KB（包含头、密钥、元数据、封面、少量音频）
+            if file_size < 1024:
+                return False, 'too_small'
+
+            with open(ncm_path, 'rb') as f:
+                # 检查文件头
+                header = f.read(8)
+                if binascii.b2a_hex(header) != b'4354454e4644414d':
+                    return False, 'bad_header'
+
+                # 检查关键结构是否完整
+                f.seek(2, 1)
+                try:
+                    key_length = struct.unpack('<I', f.read(4))[0]
+                except struct.error:
+                    return False, 'truncated'
+
+                # 密钥长度异常（正常范围约 100-300 字节）
+                if key_length == 0 or key_length > 10000:
+                    return False, 'invalid_struct'
+
+                # 检查文件是否包含完整的密钥数据
+                if 14 + key_length > file_size:
+                    return False, 'truncated'
+
+                f.seek(key_length, 1)
+                try:
+                    meta_length = struct.unpack('<I', f.read(4))[0]
+                except struct.error:
+                    return False, 'truncated'
+
+                # 元数据长度异常（正常范围约 0-10000 字节）
+                if meta_length > 100000:
+                    return False, 'invalid_struct'
+
+                # 检查文件是否包含完整的元数据
+                if 18 + key_length + meta_length > file_size:
+                    return False, 'truncated'
+
+            return True, None
+
+        except Exception as e:
+            return False, f'check_error: {e}'
+
     def decode(self, ncm_path, output_dir=None):
         ncm_path = Path(ncm_path)
         if not ncm_path.exists() or not ncm_path.suffix == '.ncm':
@@ -89,12 +146,32 @@ class NCMUniversalDecoder:
             debug_dir = output_dir / 'debug'
             debug_dir.mkdir(exist_ok=True)
 
+        # 文件完整性预检查
+        ok, reason = self.preflight_check(ncm_path)
+        if not ok:
+            file_size = os.path.getsize(ncm_path) if ncm_path.exists() else 0
+            print(f"❌ 文件完整性检查失败: {ncm_path.name}")
+            print(f"   文件大小: {file_size / 1024:.1f} KB")
+            if reason == 'too_small':
+                print(f"   原因: 文件太小（< 1KB），疑似下载未完成")
+                print(f"   💡 建议: 删除此文件并重新下载")
+            elif reason == 'bad_header':
+                print(f"   原因: 文件头损坏或不是 NCM 格式")
+                print(f"   💡 建议: 确认文件是 .ncm 格式，或重新下载")
+            elif reason == 'truncated':
+                print(f"   原因: 文件被截断（下载不完整）")
+                print(f"   💡 建议: 删除此文件并重新下载（这是常见问题）")
+            elif reason == 'invalid_struct':
+                print(f"   原因: 文件结构异常")
+                print(f"   💡 建议: 重新下载，如果多次失败请联系开发者")
+            else:
+                print(f"   原因: {reason}")
+            return False
+
         try:
             with open(ncm_path, 'rb') as f:
-                header = f.read(8)
-                if binascii.b2a_hex(header) != b'4354454e4644414d':
-                    print(f"❌ 无效的NCM文件头")
-                    return False
+                # 跳过头部和保留字节（已在 preflight 中验证）
+                f.read(8)
 
                 print(f"处理文件: {ncm_path.name}")
 
@@ -184,9 +261,15 @@ class NCMUniversalDecoder:
                         print(f"    ❌ {method_name} 失败")
 
                 if not successful_method:
-                    print(f"  ❌ 所有方法都失败了")
+                    print(f"  ❌ 所有解密方法都无法识别音频格式")
+                    print(f"  💡 这通常意味着：")
+                    print(f"     1. 文件下载不完整（最常见，建议重新下载）")
+                    print(f"     2. 文件在传输/拷贝过程中损坏")
+                    print(f"     3. 网易云使用了新的加密版本（请反馈给开发者）")
                     print(f"  调试信息:")
-                    print(f"    原始前16字节: {binascii.b2a_hex(test_data[:16])}")
+                    print(f"    文件大小: {os.path.getsize(ncm_path) / 1024:.1f} KB")
+                    print(f"    音频起始位置: 0x{audio_start:x}")
+                    print(f"    原始前16字节: {binascii.b2a_hex(test_data[:16]).decode()}")
 
                     debug_file = debug_dir / f"{ncm_path.stem}.debug"
                     with open(debug_file, 'wb') as df:
@@ -245,21 +328,59 @@ def decode_directory(input_dir, output_dir=None):
 
     decoder = NCMUniversalDecoder()
     success_count = 0
-    failed_files = []
+    # 按失败原因分类，方便用户定位问题
+    failed_by_reason = {
+        'incomplete': [],   # 文件不完整（建议重下）
+        'bad_header': [],   # 文件头损坏
+        'algo_failed': [],  # 加密算法不匹配
+        'other': [],        # 其他错误
+    }
 
     for ncm_file in ncm_files:
+        ok, reason = decoder.preflight_check(ncm_file)
+        if not ok:
+            if reason in ('too_small', 'truncated'):
+                failed_by_reason['incomplete'].append(ncm_file.name)
+            elif reason == 'bad_header':
+                failed_by_reason['bad_header'].append(ncm_file.name)
+            else:
+                failed_by_reason['other'].append(f"{ncm_file.name} ({reason})")
+            print(f"⚠️ 跳过损坏文件: {ncm_file.name} ({reason})")
+            print()
+            continue
+
         if decoder.decode(ncm_file, output_dir):
             success_count += 1
         else:
-            failed_files.append(ncm_file.name)
+            failed_by_reason['algo_failed'].append(ncm_file.name)
         print()
 
-    print("=" * 60)
-    print(f"完成: {success_count}/{len(ncm_files)} 成功")
+    total = len(ncm_files)
+    failed_total = sum(len(v) for v in failed_by_reason.values())
 
-    if failed_files:
-        print(f"\n失败的文件:")
-        for name in failed_files[:10]:
+    print("=" * 60)
+    print(f"完成: {success_count}/{total} 成功，{failed_total} 失败")
+
+    if failed_by_reason['incomplete']:
+        print(f"\n📥 下载不完整的文件（{len(failed_by_reason['incomplete'])} 个，建议重新下载）:")
+        for name in failed_by_reason['incomplete'][:10]:
+            print(f"  • {name}")
+        if len(failed_by_reason['incomplete']) > 10:
+            print(f"  ... 还有 {len(failed_by_reason['incomplete']) - 10} 个")
+
+    if failed_by_reason['bad_header']:
+        print(f"\n🔧 文件头损坏（{len(failed_by_reason['bad_header'])} 个）:")
+        for name in failed_by_reason['bad_header'][:10]:
+            print(f"  • {name}")
+
+    if failed_by_reason['algo_failed']:
+        print(f"\n🔐 加密算法不匹配（{len(failed_by_reason['algo_failed'])} 个，重下也可能解决）:")
+        for name in failed_by_reason['algo_failed'][:10]:
+            print(f"  • {name}")
+
+    if failed_by_reason['other']:
+        print(f"\n❓ 其他错误（{len(failed_by_reason['other'])} 个）:")
+        for name in failed_by_reason['other'][:10]:
             print(f"  • {name}")
 
 

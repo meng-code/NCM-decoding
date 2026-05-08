@@ -23,8 +23,9 @@ from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
 from mutagen import File as MFile
 
-# 导入 NCM 工具模块
+# 导入共享模块
 from ncm_utils import read_ncm_meta
+from filename_parser import parse_filename_as_title_artist as parse_filename
 
 
 def get_lyrics(song_id: int) -> Optional[str]:
@@ -250,29 +251,6 @@ def update_audio_tags(audio_path: str, info: Dict) -> bool:
         print(f"更新标签失败: {e}")
         return False
 
-
-def parse_filename(filename: str) -> tuple:
-    """从文件名解析艺术家和标题"""
-    # 去掉扩展名
-    stem = Path(filename).stem
-
-    # 尝试分割 "艺术家 - 标题" 格式
-    patterns = [
-        r'^(.+?)\s*-\s*(.+)$',  # 标准格式
-        r'^(.+?)\s*－\s*(.+)$',  # 全角横线
-        r'^(.+?)\s*—\s*(.+)$',  # 长横线
-        r'^(.+?)\s*–\s*(.+)$',  # 短横线
-    ]
-
-    for pattern in patterns:
-        match = re.match(pattern, stem)
-        if match:
-            artist = match.group(1).strip()
-            title = match.group(2).strip()
-            return title, artist
-
-    # 如果没有匹配，返回整个文件名作为标题
-    return stem, ""
 
 
 def process_audio_file(audio_path: str, ncm_path: str = None, force_update: bool = False,
