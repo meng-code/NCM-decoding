@@ -78,10 +78,11 @@ class NCMUniversalDecoder:
         文件完整性预检查
         返回 (是否通过, 失败原因)
         失败原因可能是：
-          - 'too_small'      文件太小，疑似下载不完整
-          - 'bad_header'     文件头损坏，疑似下载错误或文件类型错误
-          - 'truncated'      文件被截断
-          - 'invalid_struct' 结构损坏（key/meta 长度异常）
+          - 'too_small'         文件太小，疑似下载不完整
+          - 'bad_header'        文件头损坏，疑似下载错误或文件类型错误
+          - 'truncated'         文件被截断
+          - 'invalid_struct'    结构损坏（key/meta/image 长度异常）
+          - 'corrupt_offset'    音频偏移异常（中间段损坏，需要重下）
         """
         try:
             file_size = os.path.getsize(ncm_path)
@@ -125,6 +126,38 @@ class NCMUniversalDecoder:
                 if 18 + key_length + meta_length > file_size:
                     return False, 'truncated'
 
+                # 跳过元数据 + CRC(4) + 保留(5) 后读取封面长度
+                f.seek(meta_length + 4 + 5, 1)
+                try:
+                    image_size = struct.unpack('<I', f.read(4))[0]
+                except struct.error:
+                    return False, 'truncated'
+
+                # 封面长度异常（正常 50KB-2MB，单图最大也很少超过 50MB）
+                if image_size > 50 * 1024 * 1024:
+                    return False, 'invalid_struct'
+
+                # 计算音频起始位置：8(header) + 2 + 4 + key_length
+                #                  + 4 + meta_length + 4 + 5 + 4 + image_size
+                audio_start = 27 + key_length + meta_length + image_size
+
+                # 检查音频起始位置是否在文件范围内
+                if audio_start >= file_size:
+                    return False, 'truncated'
+
+                # 检查音频数据剩余大小是否合理
+                # FLAC 文件至少要有几 KB 才算正常的音乐
+                audio_size = file_size - audio_start
+                if audio_size < 10 * 1024:
+                    return False, 'corrupt_offset'
+
+                # 关键：检测"结构异常但大小正常"的情况
+                # 如果元数据声明了格式（说明前段是好的），但封面/音频偏移不合理：
+                # 正常 NCM 文件应该带封面，封面通常 50KB-2MB
+                # 如果封面 < 1KB 但文件 > 1MB，说明中间段数据错乱
+                if file_size > 1024 * 1024 and image_size < 1024 and audio_start < 10240:
+                    return False, 'corrupt_offset'
+
             return True, None
 
         except Exception as e:
@@ -162,8 +195,12 @@ class NCMUniversalDecoder:
                 print(f"   原因: 文件被截断（下载不完整）")
                 print(f"   💡 建议: 删除此文件并重新下载（这是常见问题）")
             elif reason == 'invalid_struct':
-                print(f"   原因: 文件结构异常")
+                print(f"   原因: 文件结构异常（长度字段不合理）")
                 print(f"   💡 建议: 重新下载，如果多次失败请联系开发者")
+            elif reason == 'corrupt_offset':
+                print(f"   原因: 文件中间段损坏（音频偏移异常）")
+                print(f"   💡 建议: 删除此文件并重新下载")
+                print(f"      （文件大小正常但内部封面/元数据区域错乱，重下即可解决）")
             else:
                 print(f"   原因: {reason}")
             return False
@@ -339,7 +376,7 @@ def decode_directory(input_dir, output_dir=None):
     for ncm_file in ncm_files:
         ok, reason = decoder.preflight_check(ncm_file)
         if not ok:
-            if reason in ('too_small', 'truncated'):
+            if reason in ('too_small', 'truncated', 'corrupt_offset'):
                 failed_by_reason['incomplete'].append(ncm_file.name)
             elif reason == 'bad_header':
                 failed_by_reason['bad_header'].append(ncm_file.name)
