@@ -73,6 +73,122 @@ class NCMUniversalDecoder:
 
         return bytes(result)
 
+    def _has_audio_signature_loose(self, data):
+        """宽松验证：粗扫描用，只检查魔术字节"""
+        if len(data) < 4:
+            return False
+        if data[:4] == b'fLaC':
+            return True
+        if data[:3] == b'ID3':
+            return True
+        if data[0] == 0xff and (data[1] & 0xe0) == 0xe0:
+            return True
+        if len(data) >= 8 and data[4:8] == b'ftyp':
+            return True
+        if data[:4] == b'OggS':
+            return True
+        return False
+
+    def _has_audio_signature_strict(self, data):
+        """严格验证：精细搜索用，验证完整的格式头结构"""
+        if len(data) < 16:
+            return False
+
+        # FLAC: fLaC + 合法 STREAMINFO (block_type=0, size=34)
+        if data[:4] == b'fLaC':
+            block_type = data[4] & 0x7f
+            block_size = (data[5] << 16) | (data[6] << 8) | data[7]
+            return block_type == 0 and block_size == 34
+
+        # MP3 ID3v2 标签
+        if data[:3] == b'ID3':
+            return data[3] < 5  # 合法版本号
+
+        # MP3 同步帧
+        if data[0] == 0xff and (data[1] & 0xe0) == 0xe0:
+            version = (data[1] >> 3) & 0x03
+            layer = (data[1] >> 1) & 0x03
+            return layer != 0 and version != 1
+
+        # M4A
+        if len(data) >= 8 and data[4:8] == b'ftyp':
+            return True
+
+        # OGG
+        if data[:4] == b'OggS' and data[4] == 0:
+            return True
+
+        return False
+
+    def find_audio_start_recovery(self, ncm_path, key_box_original):
+        """
+        恢复模式：当文件结构损坏（如音频起始偏移被错误读取）时，
+        通过扫描整个文件来搜索正确的音频起始位置。
+
+        粗扫描（步长 4KB）找到候选区域，精细搜索（逐字节）确认精确位置。
+
+        Args:
+            ncm_path: NCM 文件路径
+            key_box_original: 已解密的原始 key_box
+
+        Returns:
+            (audio_start, method_func, detected_format) 或 (None, None, None)
+        """
+        file_size = os.path.getsize(ncm_path)
+
+        methods = [
+            ("方法1 (原始)", self.try_decode_method1),
+            ("方法2 (RC4)", self.try_decode_method2),
+            ("方法3 (新版)", self.try_decode_method3),
+        ]
+
+        print(f"  🔧 进入恢复模式：扫描整个文件搜索正确的音频起始位置")
+        print(f"     （文件大小 {file_size / 1024:.1f} KB，可能需要几秒钟）")
+
+        coarse_step = 4096
+        coarse_start = 8 * 1024
+        coarse_end = file_size - 1024
+
+        with open(ncm_path, 'rb') as f:
+            # 阶段 1：粗扫描寻找候选区域
+            for coarse_offset in range(coarse_start, coarse_end, coarse_step):
+                f.seek(coarse_offset)
+                test_data = f.read(16)
+                if len(test_data) < 16:
+                    continue
+
+                for method_name, method_func in methods:
+                    key_box_copy = bytearray(key_box_original)
+                    decrypted = method_func(key_box_copy, test_data)
+
+                    if not self._has_audio_signature_loose(decrypted):
+                        continue
+
+                    print(f"  📍 粗扫描发现候选: 0x{coarse_offset:x} ({method_name})")
+
+                    # 阶段 2：在候选位置附近逐字节精细搜索
+                    fine_start = max(coarse_start, coarse_offset - coarse_step)
+                    fine_end = coarse_offset + 16
+
+                    for fine_offset in range(fine_start, fine_end):
+                        f.seek(fine_offset)
+                        fine_data = f.read(64)
+                        if len(fine_data) < 16:
+                            continue
+
+                        key_box_fine = bytearray(key_box_original)
+                        fine_decrypted = method_func(key_box_fine, fine_data)
+
+                        if self._has_audio_signature_strict(fine_decrypted):
+                            detected = self.detect_format(fine_decrypted)
+                            print(f"  ✅ 恢复成功！正确起始: 0x{fine_offset:x}, 格式: {detected}")
+                            return fine_offset, method_func, detected
+
+                    print(f"  ⚠️ 该候选位置精细搜索未找到精确起点，继续...")
+
+        print(f"  ❌ 恢复模式失败：未能定位有效的音频起始位置")
+        return None, None, None
+
     def preflight_check(self, ncm_path):
         """
         文件完整性预检查
@@ -181,7 +297,9 @@ class NCMUniversalDecoder:
 
         # 文件完整性预检查
         ok, reason = self.preflight_check(ncm_path)
-        if not ok:
+        # corrupt_offset 是可恢复的错误，发出警告但继续解码
+        # 后续如果三种算法都失败，会自动启用恢复模式
+        if not ok and reason != 'corrupt_offset':
             file_size = os.path.getsize(ncm_path) if ncm_path.exists() else 0
             print(f"❌ 文件完整性检查失败: {ncm_path.name}")
             print(f"   文件大小: {file_size / 1024:.1f} KB")
@@ -197,13 +315,12 @@ class NCMUniversalDecoder:
             elif reason == 'invalid_struct':
                 print(f"   原因: 文件结构异常（长度字段不合理）")
                 print(f"   💡 建议: 重新下载，如果多次失败请联系开发者")
-            elif reason == 'corrupt_offset':
-                print(f"   原因: 文件中间段损坏（音频偏移异常）")
-                print(f"   💡 建议: 删除此文件并重新下载")
-                print(f"      （文件大小正常但内部封面/元数据区域错乱，重下即可解决）")
             else:
                 print(f"   原因: {reason}")
             return False
+
+        if not ok and reason == 'corrupt_offset':
+            print(f"⚠️ 检测到文件结构异常（封面/音频偏移损坏），将启用自动恢复模式...")
 
         try:
             with open(ncm_path, 'rb') as f:
@@ -298,21 +415,39 @@ class NCMUniversalDecoder:
                         print(f"    ❌ {method_name} 失败")
 
                 if not successful_method:
-                    print(f"  ❌ 所有解密方法都无法识别音频格式")
-                    print(f"  💡 这通常意味着：")
-                    print(f"     1. 文件下载不完整（最常见，建议重新下载）")
-                    print(f"     2. 文件在传输/拷贝过程中损坏")
-                    print(f"     3. 网易云使用了新的加密版本（请反馈给开发者）")
-                    print(f"  调试信息:")
-                    print(f"    文件大小: {os.path.getsize(ncm_path) / 1024:.1f} KB")
-                    print(f"    音频起始位置: 0x{audio_start:x}")
-                    print(f"    原始前16字节: {binascii.b2a_hex(test_data[:16]).decode()}")
+                    print(f"  ⚠️ 标准起始位置 0x{audio_start:x} 解密失败，启动恢复模式...")
 
-                    debug_file = debug_dir / f"{ncm_path.stem}.debug"
-                    with open(debug_file, 'wb') as df:
-                        df.write(test_data)
-                    print(f"    已保存调试文件: {debug_file}")
-                    return False
+                    # 启动恢复模式：搜索正确的音频起始位置
+                    rec_offset, rec_method, rec_format = self.find_audio_start_recovery(
+                        ncm_path, key_box_original)
+
+                    if rec_offset is None:
+                        # 恢复模式也失败
+                        print(f"  ❌ 恢复模式无法找到有效的音频起始位置")
+                        print(f"  💡 可能原因：")
+                        print(f"     1. 文件下载严重损坏（建议重新下载）")
+                        print(f"     2. 网易云使用了新的加密版本（请反馈给开发者）")
+                        print(f"  调试信息:")
+                        print(f"    文件大小: {os.path.getsize(ncm_path) / 1024:.1f} KB")
+                        print(f"    标准起始位置: 0x{audio_start:x}")
+                        print(f"    原始前16字节: {binascii.b2a_hex(test_data[:16]).decode()}")
+
+                        debug_file = debug_dir / f"{ncm_path.stem}.debug"
+                        with open(debug_file, 'wb') as df:
+                            df.write(test_data)
+                        print(f"    已保存调试文件: {debug_file}")
+                        return False
+
+                    # 恢复模式成功：用新参数重新读取测试数据
+                    audio_start = rec_offset
+                    successful_method = rec_method
+                    output_format = rec_format
+
+                    f.seek(audio_start)
+                    test_data = f.read(1024)
+                    key_box_copy = bytearray(key_box_original)
+                    decrypted_test = successful_method(key_box_copy, test_data)
+                    print(f"  ✅ 恢复成功，继续解码...")
 
                 output_file = output_dir / f"{ncm_path.stem}.{output_format}"
 
@@ -375,8 +510,9 @@ def decode_directory(input_dir, output_dir=None):
 
     for ncm_file in ncm_files:
         ok, reason = decoder.preflight_check(ncm_file)
-        if not ok:
-            if reason in ('too_small', 'truncated', 'corrupt_offset'):
+        # corrupt_offset 让 decode 自己尝试恢复，不预先跳过
+        if not ok and reason != 'corrupt_offset':
+            if reason in ('too_small', 'truncated'):
                 failed_by_reason['incomplete'].append(ncm_file.name)
             elif reason == 'bad_header':
                 failed_by_reason['bad_header'].append(ncm_file.name)
