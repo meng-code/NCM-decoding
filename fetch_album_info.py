@@ -256,8 +256,15 @@ def update_audio_tags(audio_path: str, info: Dict) -> bool:
 
 
 def process_audio_file(audio_path: str, ncm_path: str = None, force_update: bool = False,
-                       save_lyrics: bool = True) -> bool:
-    """处理单个音频文件"""
+                       save_lyrics: bool = True):
+    """
+    处理单个音频文件
+
+    Returns:
+        (success: bool, reason: Optional[str])
+        success=True 时 reason 是 None 或简短的成功状态
+        success=False 时 reason 是失败原因
+    """
     filename = Path(audio_path).name
 
     # 判断是否需要更新标签
@@ -277,7 +284,7 @@ def process_audio_file(audio_path: str, ncm_path: str = None, force_update: bool
     # 标签完整且不需要补歌词，直接跳过
     if not update_tags and not need_lyrics:
         print(f"跳过 {filename} (已有完整标签和歌词)")
-        return True
+        return True, None
 
     if not update_tags and need_lyrics:
         print(f"补抓歌词 {filename} (已有完整标签)")
@@ -341,15 +348,15 @@ def process_audio_file(audio_path: str, ncm_path: str = None, force_update: bool
         if update_tags:
             if update_audio_tags(audio_path, song_info):
                 print(f"  ✅ 成功")
-                return True
+                return True, None
             else:
                 print(f"  ❌ 失败")
-                return False
+                return False, "标签写入失败"
         else:
-            return True
+            return True, None
     else:
         print(f"❌ 未找到 {filename} 的信息")
-        return False
+        return False, "未找到匹配的歌曲信息"
 
 
 def main():
@@ -385,7 +392,7 @@ def main():
 
     # 处理文件
     success = 0
-    failed = 0
+    failed_files = []  # [(filename, reason), ...]
 
     for audio_path in tqdm(audio_files, desc="处理进度"):
         try:
@@ -400,16 +407,26 @@ def main():
             # 添加延迟避免请求过快
             time.sleep(0.5)
 
-            if process_audio_file(str(audio_path), ncm_path, args.force, save_lyrics=not args.no_lyrics):
+            ok, reason = process_audio_file(
+                str(audio_path), ncm_path, args.force,
+                save_lyrics=not args.no_lyrics)
+            if ok:
                 success += 1
             else:
-                failed += 1
+                failed_files.append((audio_path.name, reason or "未知原因"))
         except Exception as e:
             # 单首歌异常不影响整批继续
             print(f"❌ 处理 {audio_path.name} 异常: {e}")
-            failed += 1
+            failed_files.append((audio_path.name, f"处理异常: {e}"))
 
-    print(f"\n完成: 成功 {success}, 失败 {failed}")
+    # 输出汇总
+    print(f"\n{'=' * 60}")
+    print(f"完成: 成功 {success}, 失败 {len(failed_files)}")
+    if failed_files:
+        print(f"\n⚠️ 失败列表（共 {len(failed_files)} 首）:")
+        for name, reason in failed_files:
+            print(f"  • {name}")
+            print(f"    └─ {reason}")
 
 
 if __name__ == "__main__":

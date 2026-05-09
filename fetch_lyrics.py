@@ -215,7 +215,7 @@ def embed_lyrics_to_audio(audio_path: str, lyrics: str) -> bool:
 
 def process_audio_file(audio_path: str, ncm_path: str = None,
                        save_lrc: bool = True, embed: bool = True,
-                       merge_translation: bool = True) -> bool:
+                       merge_translation: bool = True):
     """
     处理单个音频文件
 
@@ -225,6 +225,9 @@ def process_audio_file(audio_path: str, ncm_path: str = None,
         save_lrc: 是否保存为独立的LRC文件
         embed: 是否尝试嵌入到音频文件
         merge_translation: 是否合并翻译
+
+    Returns:
+        (success: bool, reason: Optional[str])
     """
     filename = Path(audio_path).name
     print(f"\n处理: {filename}")
@@ -264,7 +267,7 @@ def process_audio_file(audio_path: str, ncm_path: str = None,
 
     if not song_id:
         print(f"  ❌ 未找到歌曲ID")
-        return False
+        return False, "未找到歌曲ID（无法搜索到匹配的歌曲）"
 
     # 获取歌词
     print(f"  获取歌词...")
@@ -272,7 +275,7 @@ def process_audio_file(audio_path: str, ncm_path: str = None,
 
     if not lrc:
         print(f"  ❌ 未找到歌词")
-        return False
+        return False, "网易云未提供该歌曲的歌词"
 
     # 合并歌词
     if merge_translation and tlrc:
@@ -282,6 +285,7 @@ def process_audio_file(audio_path: str, ncm_path: str = None,
         final_lyrics = lrc
 
     success = False
+    fail_reasons = []
 
     # 保存为LRC文件
     if save_lrc:
@@ -289,6 +293,8 @@ def process_audio_file(audio_path: str, ncm_path: str = None,
         if save_lyrics(final_lyrics, str(lrc_path)):
             print(f"  ✓ 已保存LRC: {lrc_path.name}")
             success = True
+        else:
+            fail_reasons.append("保存 .lrc 文件失败")
 
     # 嵌入到音频文件
     if embed:
@@ -297,8 +303,11 @@ def process_audio_file(audio_path: str, ncm_path: str = None,
             success = True
         else:
             print(f"  ⚠ 无法嵌入歌词（格式限制）")
+            fail_reasons.append("嵌入歌词失败（格式限制）")
 
-    return success
+    if success:
+        return True, None
+    return False, "; ".join(fail_reasons) if fail_reasons else "未执行任何操作"
 
 
 def main():
@@ -335,7 +344,7 @@ def main():
 
     # 处理文件
     success = 0
-    failed = 0
+    failed_files = []  # [(filename, reason), ...]
 
     for audio_path in tqdm(audio_files, desc="处理进度"):
         try:
@@ -350,22 +359,30 @@ def main():
             # 添加延迟避免请求过快
             time.sleep(0.3)
 
-            if process_audio_file(
-                    str(audio_path),
-                    ncm_path,
-                    save_lrc=not args.no_lrc,
-                    embed=not args.no_embed,
-                    merge_translation=not args.no_translation
-            ):
+            ok, reason = process_audio_file(
+                str(audio_path),
+                ncm_path,
+                save_lrc=not args.no_lrc,
+                embed=not args.no_embed,
+                merge_translation=not args.no_translation
+            )
+            if ok:
                 success += 1
             else:
-                failed += 1
+                failed_files.append((audio_path.name, reason or "未知原因"))
         except Exception as e:
             # 单首歌异常不影响整批继续
             print(f"❌ 处理 {audio_path.name} 异常: {e}")
-            failed += 1
+            failed_files.append((audio_path.name, f"处理异常: {e}"))
 
-    print(f"\n完成: 成功 {success}, 失败 {failed}")
+    # 输出汇总
+    print(f"\n{'=' * 60}")
+    print(f"完成: 成功 {success}, 失败 {len(failed_files)}")
+    if failed_files:
+        print(f"\n⚠️ 失败列表（共 {len(failed_files)} 首）:")
+        for name, reason in failed_files:
+            print(f"  • {name}")
+            print(f"    └─ {reason}")
 
 
 if __name__ == "__main__":
