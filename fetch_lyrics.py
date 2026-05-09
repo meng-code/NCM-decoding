@@ -52,7 +52,9 @@ def search_song(title: str, artist: str = "") -> Optional[int]:
         resp.raise_for_status()
         result = resp.json()
 
-        songs = result.get("result", {}).get("songs", [])
+        # API 返回错误时 result 可能是字符串而非字典，做防御性检查
+        r_data = result.get("result", {}) if isinstance(result, dict) else {}
+        songs = r_data.get("songs", []) if isinstance(r_data, dict) else []
         if songs:
             return songs[0].get("id")
 

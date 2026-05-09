@@ -132,6 +132,21 @@ def _req_json(url: str, data: dict, retries: int = 2) -> Optional[dict]:
             else:
                 return None
 
+
+def _extract_songs(js):
+    """安全地从网易云 API 响应中提取歌曲列表
+
+    API 在某些情况下会让 result 字段返回字符串（错误信息）而非字典，
+    需要逐层做类型检查防御。
+    """
+    if not isinstance(js, dict):
+        return []
+    result = js.get("result")
+    if not isinstance(result, dict):
+        return []
+    songs = result.get("songs", [])
+    return songs if isinstance(songs, list) else []
+
 def search_netease_track_id(title: str, artist: str, want_seconds: Optional[float]) -> Optional[str]:
     """搜索网易云音乐track ID"""
     title_c = _clean_text(title)
@@ -158,11 +173,11 @@ def search_netease_track_id(title: str, artist: str, want_seconds: Optional[floa
     for q in queries:
         js1 = _req_json("https://music.163.com/api/cloudsearch/pc",
                         {"type": 1, "s": q, "offset": 0, "total": "true", "limit": 15})
-        songs = (js1 or {}).get("result", {}).get("songs", []) or []
+        songs = _extract_songs(js1)
         if not songs:
             js2 = _req_json("https://music.163.com/api/search/get/web",
                             {"csrf_token": "", "type": 1, "s": q, "offset": 0, "total": "true", "limit": 10})
-            songs = (js2 or {}).get("result", {}).get("songs", []) or []
+            songs = _extract_songs(js2)
 
         for s in songs:
             name = s.get("name", "")
