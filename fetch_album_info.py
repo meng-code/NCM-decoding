@@ -388,20 +388,25 @@ def main():
     failed = 0
 
     for audio_path in tqdm(audio_files, desc="处理进度"):
-        # 查找对应的NCM文件
-        ncm_path = None
-        if args.ncm_dir:
-            ncm_dir = Path(args.ncm_dir)
-            ncm_file = ncm_dir / f"{audio_path.stem}.ncm"
-            if ncm_file.exists():
-                ncm_path = str(ncm_file)
+        try:
+            # 查找对应的NCM文件
+            ncm_path = None
+            if args.ncm_dir:
+                ncm_dir = Path(args.ncm_dir)
+                ncm_file = ncm_dir / f"{audio_path.stem}.ncm"
+                if ncm_file.exists():
+                    ncm_path = str(ncm_file)
 
-        # 添加延迟避免请求过快
-        time.sleep(0.5)
+            # 添加延迟避免请求过快
+            time.sleep(0.5)
 
-        if process_audio_file(str(audio_path), ncm_path, args.force, save_lyrics=not args.no_lyrics):
-            success += 1
-        else:
+            if process_audio_file(str(audio_path), ncm_path, args.force, save_lyrics=not args.no_lyrics):
+                success += 1
+            else:
+                failed += 1
+        except Exception as e:
+            # 单首歌异常不影响整批继续
+            print(f"❌ 处理 {audio_path.name} 异常: {e}")
             failed += 1
 
     print(f"\n完成: 成功 {success}, 失败 {failed}")

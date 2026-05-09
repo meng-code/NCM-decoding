@@ -199,54 +199,69 @@ def main(decoded_dir: str, meta_img_dir: str, ncm_dir: Optional[str] = None):
 
     if ncm_dir and os.path.isdir(ncm_dir):
         for ncm in tqdm(glob(os.path.join(ncm_dir, "*.ncm")), desc="处理含 NCM 的文件"):
-            stem = os.path.splitext(os.path.basename(ncm))[0]
-            meta = read_ncm_meta(ncm)
-            if not meta:
-                continue
-            tid = str(meta.get("musicId") or meta.get("musicId".lower(), ""))
-            if not tid:
-                continue
-            img = img_idx.get(tid)
-            audio = find_matching_audio(decoded_dir, stem)
-            if img and audio:
-                try:
-                    embed_cover(audio, img)
-                    done += 1
-                except Exception as e:
-                    miss.append((audio, f"写封面失败: {e}"))
-            else:
-                miss.append((stem, "找不到图片或音频"))
+            try:
+                stem = os.path.splitext(os.path.basename(ncm))[0]
+                meta = read_ncm_meta(ncm)
+                if not meta:
+                    continue
+                tid = str(meta.get("musicId") or meta.get("musicId".lower(), ""))
+                if not tid:
+                    continue
+                img = img_idx.get(tid)
+                audio = find_matching_audio(decoded_dir, stem)
+                if img and audio:
+                    try:
+                        embed_cover(audio, img)
+                        done += 1
+                    except Exception as e:
+                        miss.append((audio, f"写封面失败: {e}"))
+                else:
+                    miss.append((stem, "找不到图片或音频"))
+            except Exception as e:
+                # 单首歌处理异常不影响整批继续
+                log.warning(f"处理 {os.path.basename(ncm)} 时出错: {e}")
+                miss.append((ncm, f"处理异常: {e}"))
 
     for audio in tqdm([p for p in glob(os.path.join(decoded_dir,"*")) if os.path.splitext(p)[1].lower() in (".flac",".mp3",".m4a",".alac",".aac")],
                       desc="处理无 NCM 的音频"):
-        stem = os.path.splitext(os.path.basename(audio))[0]
-        if os.path.splitext(audio)[1].lower()==".flac":
-            try:
-                if FLAC(audio).pictures:
-                    continue
-            except: pass
-        cands = make_title_artist_candidates(stem)
-
-        length = None
         try:
-            length = MFile(audio).info.length
-        except Exception:
-            pass
-
-        matched = False
-        for c in cands:
-            tid = search_netease_track_id(c["title"], c["artist"], length)
-            if tid and tid in img_idx:
+            stem = os.path.splitext(os.path.basename(audio))[0]
+            if os.path.splitext(audio)[1].lower()==".flac":
                 try:
-                    embed_cover(audio, img_idx[tid])
-                    done += 1
-                except Exception as e:
-                    miss.append((audio, f"写封面失败: {e}"))
-                matched = True
-                break
+                    if FLAC(audio).pictures:
+                        continue
+                except Exception:
+                    pass
+            cands = make_title_artist_candidates(stem)
 
-        if not matched:
-            miss.append((audio, "未能匹配到 trackId 或 meta 无此封面"))
+            length = None
+            try:
+                length = MFile(audio).info.length
+            except Exception:
+                pass
+
+            matched = False
+            for c in cands:
+                try:
+                    tid = search_netease_track_id(c["title"], c["artist"], length)
+                except Exception as e:
+                    log.warning(f"搜索 {stem} 失败: {e}")
+                    tid = None
+                if tid and tid in img_idx:
+                    try:
+                        embed_cover(audio, img_idx[tid])
+                        done += 1
+                    except Exception as e:
+                        miss.append((audio, f"写封面失败: {e}"))
+                    matched = True
+                    break
+
+            if not matched:
+                miss.append((audio, "未能匹配到 trackId 或 meta 无此封面"))
+        except Exception as e:
+            # 单首歌处理异常不影响整批继续
+            log.warning(f"处理 {os.path.basename(audio)} 时出错: {e}")
+            miss.append((audio, f"处理异常: {e}"))
 
     log.info(f"✅ 已写入封面：{done} 首")
     if miss:
