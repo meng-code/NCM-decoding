@@ -14,6 +14,31 @@ from typing import Optional, Tuple, List, Dict
 # 支持的分隔符（顺序很重要：长的在前，避免短分隔符提前匹配）
 SEPARATORS = [" - ", " – ", " — ", "－", "—", "–", "-"]
 
+# 已知的音频文件扩展名（仅剥离这些，避免误伤含点的歌名/艺人名）
+KNOWN_AUDIO_EXTS = {
+    ".ncm", ".flac", ".mp3", ".m4a", ".mp4", ".aac", ".alac",
+    ".ogg", ".wav", ".ape", ".wma",
+}
+
+
+def strip_ext(filename: str) -> str:
+    """
+    去除文件名的扩展名，但只剥离已知的音频扩展名。
+
+    不能直接用 Path().stem，因为像 "Mr. Children - Tomorrow"、
+    "a.b.c - song" 这类含点的名称会被错误地从点处截断。
+
+    Args:
+        filename: 文件名（带或不带扩展名）
+
+    Returns:
+        去除已知扩展名后的名称
+    """
+    p = Path(filename)
+    if p.suffix.lower() in KNOWN_AUDIO_EXTS:
+        return p.stem
+    return filename
+
 
 def parse_filename(filename: str) -> Optional[Tuple[str, str]]:
     """
@@ -26,7 +51,7 @@ def parse_filename(filename: str) -> Optional[Tuple[str, str]]:
     Returns:
         (artist, title) 元组，失败返回 None
     """
-    stem = Path(filename).stem if "." in filename else filename
+    stem = strip_ext(filename)
     stem = unicodedata.normalize("NFKC", stem).strip()
 
     for sep in SEPARATORS:
@@ -58,7 +83,7 @@ def parse_filename_as_title_artist(filename: str) -> Tuple[str, str]:
         return title, artist
 
     # 解析失败：将整个文件名作为标题
-    stem = Path(filename).stem if "." in filename else filename
+    stem = strip_ext(filename)
     return stem, ""
 
 
@@ -96,7 +121,7 @@ def make_title_artist_candidates(filename: str) -> List[Dict[str, str]]:
     Returns:
         候选列表，每项包含 title, artist, title_c (清理后), artist_c (清理后)
     """
-    stem = Path(filename).stem if "." in filename else filename
+    stem = strip_ext(filename)
     stem = unicodedata.normalize("NFKC", stem).strip()
 
     candidates = []
@@ -143,7 +168,7 @@ def guess_title_artist(filename: str) -> Tuple[str, str]:
     Returns:
         (title, artist) 元组
     """
-    stem = Path(filename).stem if "." in filename else filename
+    stem = strip_ext(filename)
 
     parts = stem.split(" - ", 1)
     if len(parts) == 2:

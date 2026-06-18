@@ -22,7 +22,6 @@ from ncm_utils import read_ncm_meta
 from filename_parser import (
     clean_text_for_search as _clean_text,
     make_title_artist_candidates,
-    guess_title_artist,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
