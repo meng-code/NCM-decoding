@@ -177,8 +177,18 @@ def embed_lyrics_to_audio(audio_path: str, lyrics: str) -> bool:
     """
     将歌词嵌入音频文件
     注意：只有部分格式支持嵌入歌词
+
+    统一约定：内嵌歌词一律为去时间轴的纯文本（Apple Music 需要纯文本才能显示），
+    带时间轴的版本保留在 .lrc 文件中。与 embed_lyrics.py 的行为保持一致，
+    避免两个工具向同一标签写入不同格式。
     """
     try:
+        # 去除时间轴（复用 embed_lyrics 的清理逻辑）
+        from embed_lyrics import clean_lrc_format
+        plain = clean_lrc_format(lyrics)
+        if not plain:
+            return False
+
         audio = MFile(audio_path)
         if audio is None:
             return False
@@ -187,22 +197,24 @@ def embed_lyrics_to_audio(audio_path: str, lyrics: str) -> bool:
 
         if ext == ".flac":
             # FLAC支持LYRICS和UNSYNCEDLYRICS标签
-            audio["LYRICS"] = lyrics
+            audio["LYRICS"] = plain
             audio.save()
             return True
 
         elif ext == ".mp3":
-            # MP3可以使用USLT帧存储歌词
+            # MP3可以使用USLT帧存储歌词。
+            # 先清掉已有 USLT（不同 lang/desc 会被视为不同帧而累积）
             from mutagen.id3 import USLT
             if audio.tags is None:
                 audio.add_tags()
-            audio.tags.add(USLT(encoding=3, lang='chi', desc='', text=lyrics))
+            audio.tags.delall("USLT")
+            audio.tags.add(USLT(encoding=3, lang='eng', desc='', text=plain))
             audio.save()
             return True
 
         elif ext in [".m4a", ".mp4"]:
             # M4A/MP4使用©lyr标签
-            audio["©lyr"] = lyrics
+            audio["©lyr"] = plain
             audio.save()
             return True
 

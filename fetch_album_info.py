@@ -222,6 +222,15 @@ def update_audio_tags(audio_path: str, info: Dict) -> bool:
                                          "genre", "tracknumber", "discnumber", "albumartist"]:
                         easy[key] = value
                 easy.save()
+
+                # EasyID3 不支持 comment，用底层 COMM 帧补写专辑简介
+                if info.get("comment"):
+                    from mutagen.id3 import ID3, COMM
+                    tags = ID3(audio_path)
+                    tags.delall("COMM")
+                    tags.add(COMM(encoding=3, lang="eng", desc="",
+                                  text=info["comment"]))
+                    tags.save(audio_path)
             except Exception as e:
                 print(f"更新MP3标签失败: {e}")
                 return False
