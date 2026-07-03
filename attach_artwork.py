@@ -45,14 +45,19 @@ def build_img_index(meta_img_dir: str) -> Dict[str, str]:
     return idx
 
 
+_AUDIO_EXTS = (".flac", ".mp3", ".m4a", ".alac", ".aac")
+
 def find_matching_audio(decoded_dir: str, stem: str):
     """匹配音频文件"""
-    for ext in (".flac", ".mp3", ".m4a", ".alac", ".aac"):
+    for ext in _AUDIO_EXTS:
         p = os.path.join(decoded_dir, f"{stem}{ext}")
         if os.path.exists(p):
             return p
+    # 回退：忽略空白差异模糊匹配，但只接受音频扩展名，避免返回同名 .lrc/.jpg
     norm = re.sub(r"\s+", "", stem).lower()
     for p in glob(os.path.join(decoded_dir, "*")):
+        if os.path.splitext(p)[1].lower() not in _AUDIO_EXTS:
+            continue
         s = re.sub(r"\s+", "", os.path.splitext(os.path.basename(p))[0]).lower()
         if s == norm:
             return p
@@ -73,7 +78,10 @@ def embed_cover(audio_path: str, img_path: str):
     img_mime = _infer_mime(img_path)
     with open(img_path, "rb") as f:
         img_bytes = f.read()
-    if img_mime == "image/webp" and Image is not None:
+    if img_mime == "image/webp":
+        # webp 需转成 png 才能安全内嵌；否则数据与声明的 mime 不符会导致播放器显示破图
+        if Image is None:
+            raise RuntimeError("封面为 webp 但未安装 Pillow，无法转换（跳过以免写入错误 mime）")
         try:
             from io import BytesIO
             im = Image.open(img_path).convert("RGB")
@@ -81,8 +89,8 @@ def embed_cover(audio_path: str, img_path: str):
             im.save(buf, format="PNG")
             img_bytes = buf.getvalue()
             img_mime = "image/png"
-        except Exception:
-            pass
+        except Exception as e:
+            raise RuntimeError(f"webp 封面转换失败: {e}")
 
     if ext == ".flac":
         audio = FLAC(audio_path)

@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Optional, Tuple, List, Dict
 
 
-# 支持的分隔符（顺序很重要：长的在前，避免短分隔符提前匹配）
-SEPARATORS = [" - ", " – ", " — ", "－", "—", "–", "-"]
+# 带空格的分隔符：明确的"艺人 - 标题"边界。
+# 注意：全角横线 "－"(U+FF0D) 经 NFKC 会先归一成 "-"，故无需单列。
+SPACED_SEPARATORS = [" - ", " – ", " — "]
 
 # 已知的音频文件扩展名（仅剥离这些，避免误伤含点的歌名/艺人名）
 KNOWN_AUDIO_EXTS = {
@@ -40,6 +41,33 @@ def strip_ext(filename: str) -> str:
     return filename
 
 
+def _split_two(stem: str) -> Optional[Tuple[str, str]]:
+    """
+    把 "艺人 - 标题" 切成 (左, 右) 两段。切不出来返回 None。
+
+    策略：
+    1. 优先匹配带空格分隔符 " - "/" – "/" — "（明确边界）。
+    2. 回退到裸连字符 "-"，但仅当整串无空格、恰好一个连字符、且两侧非纯数字时，
+       以避免把 "2024-01-01 backup"（日期）、"Jay-Z 歌"（缺正规分隔符）等误切成错误标签。
+    """
+    # 1) 带空格分隔符
+    for sep in SPACED_SEPARATORS:
+        if sep in stem:
+            left, right = stem.split(sep, 1)
+            left, right = left.strip(), right.strip()
+            if left and right:
+                return left, right
+
+    # 2) 受限的裸连字符回退（如 "周杰伦-七里香"、"will.i.am-song"）
+    if " " not in stem and stem.count("-") == 1:
+        left, right = stem.split("-", 1)
+        left, right = left.strip(), right.strip()
+        if left and right and not (left.isdigit() and right.isdigit()):
+            return left, right
+
+    return None
+
+
 def parse_filename(filename: str) -> Optional[Tuple[str, str]]:
     """
     从文件名解析艺人和标题
@@ -53,15 +81,7 @@ def parse_filename(filename: str) -> Optional[Tuple[str, str]]:
     """
     stem = strip_ext(filename)
     stem = unicodedata.normalize("NFKC", stem).strip()
-
-    for sep in SEPARATORS:
-        if sep in stem:
-            artist, title = stem.split(sep, 1)
-            artist, title = artist.strip(), title.strip()
-            if artist and title:
-                return artist, title
-
-    return None
+    return _split_two(stem)
 
 
 def parse_filename_as_title_artist(filename: str) -> Tuple[str, str]:
@@ -126,11 +146,12 @@ def make_title_artist_candidates(filename: str) -> List[Dict[str, str]]:
 
     candidates = []
 
-    # 尝试用 " - " 分割（标准分隔符）
-    parts = [p.strip() for p in stem.split(" - ", 1)]
+    # 复用统一的分隔逻辑（支持带空格分隔符 + 受限裸连字符），
+    # 而非只认 " - "，以覆盖全角/破折号等命名
+    split = _split_two(stem)
 
-    if len(parts) == 2:
-        left, right = parts
+    if split:
+        left, right = split
         # 候选1：左边是标题，右边是艺人
         candidates.append({
             "title": left,
@@ -168,11 +189,11 @@ def guess_title_artist(filename: str) -> Tuple[str, str]:
     Returns:
         (title, artist) 元组
     """
-    stem = strip_ext(filename)
+    stem = unicodedata.normalize("NFKC", strip_ext(filename)).strip()
 
-    parts = stem.split(" - ", 1)
-    if len(parts) == 2:
-        artist, title = parts
+    split = _split_two(stem)
+    if split:
+        artist, title = split
     else:
         artist, title = "", stem
 

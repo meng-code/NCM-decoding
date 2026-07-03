@@ -22,7 +22,7 @@
 
 ```bash
 # 安装 Python 依赖
-pip install -U cryptography tqdm mutagen pillow rapidfuzz requests pycryptodome
+pip install -U tqdm mutagen pillow rapidfuzz requests pycryptodome
 
 # 解码 NCM 文件
 python3 ncm_universal.py "your_file.ncm" -o "/输出目录"
@@ -416,16 +416,18 @@ python3 music_manager_gui.py
 ### Python 依赖（必需）
 
 ```bash
-pip install -U cryptography tqdm mutagen pillow rapidfuzz requests pycryptodome
+pip install -U tqdm mutagen pillow rapidfuzz requests pycryptodome
 ```
 
 **包说明：**
-- `cryptography` / `pycryptodome`：AES 解密
+- `pycryptodome`：AES 解密
 - `mutagen`：音频标签读写
 - `pillow`：图片处理（WEBP 转换）
 - `rapidfuzz`：模糊文本匹配
 - `requests`：网易云 API 调用
 - `tqdm`：进度条显示
+
+> **共享模块说明：** `ncm_utils.py`（NCM 解密）与 `filename_parser.py`（文件名解析）是公共依赖模块。`attach_artwork.py`、`fetch_album_info.py`、`fetch_lyrics.py`、`fix_flac_tags_from_filename.py` 等脚本会 `import` 它们，因此**运行任一脚本时需与这两个模块置于同一目录**（直接 clone 整个仓库即可，不要单独拷贝某个脚本）。
 
 ### 外部工具（可选）
 

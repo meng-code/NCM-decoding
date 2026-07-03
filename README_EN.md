@@ -10,7 +10,7 @@ NetEase Cloud Music (NCM) file processing toolkit - Decode, tag repair, cover em
 
 ```bash
 # Install Python dependencies
-pip install -U cryptography tqdm mutagen pillow rapidfuzz requests pycryptodome
+pip install -U tqdm mutagen pillow rapidfuzz requests pycryptodome
 
 # Decode NCM file
 python3 ncm_universal.py "your_file.ncm" -o "/output_dir"
@@ -404,16 +404,18 @@ python3 music_manager_gui.py
 ### Python Dependencies (Required)
 
 ```bash
-pip install -U cryptography tqdm mutagen pillow rapidfuzz requests pycryptodome
+pip install -U tqdm mutagen pillow rapidfuzz requests pycryptodome
 ```
 
 **Package descriptions:**
-- `cryptography` / `pycryptodome`: AES decryption
+- `pycryptodome`: AES decryption
 - `mutagen`: Audio tag read/write
 - `pillow`: Image processing (WEBP conversion)
 - `rapidfuzz`: Fuzzy text matching
 - `requests`: NetEase Cloud API calls
 - `tqdm`: Progress bar display
+
+> **Shared modules:** `ncm_utils.py` (NCM decryption) and `filename_parser.py` (filename parsing) are common dependency modules. Scripts like `attach_artwork.py`, `fetch_album_info.py`, `fetch_lyrics.py`, and `fix_flac_tags_from_filename.py` `import` them, so **they must sit in the same directory when you run any script** (just clone the whole repo — don't copy a single script in isolation).
 
 ### External Tools (Optional)
 

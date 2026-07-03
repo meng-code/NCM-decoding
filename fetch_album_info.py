@@ -21,11 +21,13 @@ from mutagen.flac import FLAC
 from mutagen.mp3 import MP3, EasyMP3
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
+from mutagen.id3 import ID3NoHeaderError
 from mutagen import File as MFile
 
 # 导入共享模块
 from ncm_utils import read_ncm_meta
 from filename_parser import parse_filename_as_title_artist as parse_filename
+from fetch_lyrics import merge_lyrics  # 复用逐行交织合并（含 3 位毫秒兼容）
 
 
 def get_lyrics(song_id: int) -> Optional[str]:
@@ -60,10 +62,9 @@ def get_lyrics(song_id: int) -> Optional[str]:
         if "tlyric" in result:
             tlrc = result["tlyric"].get("lyric", None)
 
-        # 如果有翻译，合并到原歌词中
+        # 如果有翻译，逐行交织合并成合法 LRC（而非整块拼接，避免产生非法标签行）
         if lrc and tlrc:
-            # 简单合并：在原歌词后添加翻译标记
-            return f"{lrc}\n\n[翻译歌词]\n{tlrc}"
+            return merge_lyrics(lrc, tlrc)
 
         return lrc
 
@@ -115,6 +116,8 @@ def search_song_info(title: str, artist: str = "") -> Optional[Dict]:
                 return detail
 
         # 如果获取详情失败，返回基础信息
+        pos = song.get("position")
+        disc = song.get("disc")
         return {
             "title": song.get("name", ""),
             "artist": " / ".join([a.get("name", "") for a in song.get("artists", [])]),
@@ -122,8 +125,8 @@ def search_song_info(title: str, artist: str = "") -> Optional[Dict]:
             "albumartist": " / ".join([a.get("name", "") for a in song.get("album", {}).get("artists", [])]),
             "date": "",
             "genre": "",
-            "tracknumber": str(song.get("position", "")),
-            "discnumber": str(song.get("disc", ""))
+            "tracknumber": str(pos) if pos else "",
+            "discnumber": str(disc) if disc else ""
         }
 
     except Exception as e:
@@ -164,6 +167,9 @@ def get_song_detail(song_id: int) -> Optional[Dict]:
         else:
             date = ""
 
+        # position/disc 为 0 或缺失都视为无效轨号（正常从 1 开始），避免写入 "0"
+        pos = song.get("position")
+        disc = song.get("disc")
         return {
             "title": song.get("name", ""),
             "artist": " / ".join([a.get("name", "") for a in song.get("artists", [])]),
@@ -171,8 +177,8 @@ def get_song_detail(song_id: int) -> Optional[Dict]:
             "albumartist": " / ".join([a.get("name", "") for a in album.get("artists", [])]),
             "date": date,
             "genre": "",  # 网易云API不提供流派信息
-            "tracknumber": str(song.get("position", "")),
-            "discnumber": str(song.get("disc", "")),
+            "tracknumber": str(pos) if pos else "",
+            "discnumber": str(disc) if disc else "",
             "comment": album.get("description", "")[:500] if album.get("description") else "",
             "song_id": song_id  # 保存ID用于获取歌词
         }
@@ -203,10 +209,17 @@ def update_audio_tags(audio_path: str, info: Dict) -> bool:
         elif ext == ".mp3":
             # MP3文件
             try:
-                # 尝试使用EasyID3
-                easy = EasyID3(audio_path)
+                # 尝试使用EasyID3；文件无 ID3 头时先创建再打开
+                try:
+                    easy = EasyID3(audio_path)
+                except ID3NoHeaderError:
+                    _m = MP3(audio_path)
+                    _m.add_tags()
+                    _m.save()
+                    easy = EasyID3(audio_path)
                 for key, value in info.items():
-                    if value and key in ["title", "artist", "album", "date", "genre", "tracknumber", "albumartist"]:
+                    if value and key in ["title", "artist", "album", "date",
+                                         "genre", "tracknumber", "discnumber", "albumartist"]:
                         easy[key] = value
                 easy.save()
             except Exception as e:

@@ -19,7 +19,8 @@ class NCMUniversalDecoder:
         if not s:
             return s
         padding = s[-1] if isinstance(s[-1], int) else ord(s[-1])
-        if padding > len(s):
+        # padding==0 时 s[:-0] 会退化成空串，需与 padding>len 一样原样返回
+        if padding > len(s) or padding == 0:
             return s
         return s[:-padding]
 
@@ -120,12 +121,32 @@ class NCMUniversalDecoder:
 
         return False
 
+    # 各格式的魔术签名：(magic 字节, magic 在音频起点内的偏移)
+    # 大多数格式魔术在音频第 0 字节；M4A 的 'ftyp' 在第 4 字节（前 4 字节是 box 长度）
+    _AUDIO_SIGNATURES = [
+        (b'fLaC\x00\x00\x00\x22', 0),  # FLAC + STREAMINFO 块头（block_type=0, size=34），最强
+        (b'fLaC', 0),                  # FLAC 回退
+        (b'OggS', 0),                  # OGG
+        (b'ID3', 0),                   # MP3 (ID3v2)
+        (b'ftyp', 4),                  # M4A/MP4（'ftyp' 位于第 4 字节）
+    ]
+
+    def _keystream(self, method_func, key_box_original, n):
+        """
+        取某解密方法从音频起点(keystream 索引 0)开始的前 n 字节 keystream。
+        原理：对全零字节解密，result[i] = 0 ^ keystream[i] = keystream[i]。
+        对 method1/method3（无状态）与 method2（RC4，前 n 字节确定）均成立。
+        """
+        return method_func(bytearray(key_box_original), bytes(n))
+
     def find_audio_start_recovery(self, ncm_path, key_box_original):
         """
         恢复模式：当文件结构损坏（如音频起始偏移被错误读取）时，
-        通过扫描整个文件来搜索正确的音频起始位置。
+        在整个文件中搜索正确的音频起始位置。
 
-        粗扫描（步长 4KB）找到候选区域，精细搜索（逐字节）确认精确位置。
+        做法：利用 keystream 只依赖字节索引这一特性，反向计算"密文指纹"
+        （魔术字节 XOR keystream），用 bytes.find() 在全文件做 C 级快速搜索。
+        相比逐字节试解密，这能覆盖任意（非对齐）起点且快得多。
 
         Args:
             ncm_path: NCM 文件路径
@@ -142,49 +163,47 @@ class NCMUniversalDecoder:
             ("方法3 (新版)", self.try_decode_method3),
         ]
 
-        print(f"  🔧 进入恢复模式：扫描整个文件搜索正确的音频起始位置")
-        print(f"     （文件大小 {file_size / 1024:.1f} KB，可能需要几秒钟）")
-
-        coarse_step = 4096
-        coarse_start = 8 * 1024
-        coarse_end = file_size - 1024
+        print(f"  🔧 进入恢复模式：全文件搜索正确的音频起始位置")
+        print(f"     （文件大小 {file_size / 1024:.1f} KB）")
 
         with open(ncm_path, 'rb') as f:
-            # 阶段 1：粗扫描寻找候选区域
-            for coarse_offset in range(coarse_start, coarse_end, coarse_step):
-                f.seek(coarse_offset)
-                test_data = f.read(16)
-                if len(test_data) < 16:
-                    continue
+            data = f.read()
 
-                for method_name, method_func in methods:
-                    key_box_copy = bytearray(key_box_original)
-                    decrypted = method_func(key_box_copy, test_data)
+        # 音频通常不会紧贴文件头；限定一个合理的下限避免误命中头部结构
+        min_start = 10
 
-                    if not self._has_audio_signature_loose(decrypted):
+        for method_name, method_func in methods:
+            # 预计算该方法的 keystream（够长即可覆盖所有签名 + 偏移）
+            ks = self._keystream(method_func, key_box_original, 32)
+
+            for magic, magic_off in self._AUDIO_SIGNATURES:
+                # 指纹 = 魔术字节 XOR 对应位置的 keystream
+                fingerprint = bytes(
+                    magic[i] ^ ks[magic_off + i] for i in range(len(magic))
+                )
+
+                # 全文件搜索该指纹的所有出现位置（短指纹可能有假阳性，逐个严格验证）
+                search_from = 0
+                while True:
+                    hit = data.find(fingerprint, search_from)
+                    if hit < 0:
+                        break
+                    search_from = hit + 1
+
+                    audio_start = hit - magic_off
+                    if audio_start < min_start or audio_start >= file_size:
                         continue
 
-                    print(f"  📍 粗扫描发现候选: 0x{coarse_offset:x} ({method_name})")
-
-                    # 阶段 2：在候选位置附近逐字节精细搜索
-                    fine_start = max(coarse_start, coarse_offset - coarse_step)
-                    fine_end = coarse_offset + 16
-
-                    for fine_offset in range(fine_start, fine_end):
-                        f.seek(fine_offset)
-                        fine_data = f.read(64)
-                        if len(fine_data) < 16:
-                            continue
-
-                        key_box_fine = bytearray(key_box_original)
-                        fine_decrypted = method_func(key_box_fine, fine_data)
-
-                        if self._has_audio_signature_strict(fine_decrypted):
-                            detected = self.detect_format(fine_decrypted)
-                            print(f"  ✅ 恢复成功！正确起始: 0x{fine_offset:x}, 格式: {detected}")
-                            return fine_offset, method_func, detected
-
-                    print(f"  ⚠️ 该候选位置精细搜索未找到精确起点，继续...")
+                    # 严格验证：从候选起点实际解密 64 字节，确认是合法音频头
+                    seg = data[audio_start:audio_start + 64]
+                    if len(seg) < 16:
+                        continue
+                    decrypted = method_func(bytearray(key_box_original), seg)
+                    if self._has_audio_signature_strict(decrypted):
+                        detected = self.detect_format(decrypted)
+                        print(f"  ✅ 恢复成功！正确起始: 0x{audio_start:x}, "
+                              f"格式: {detected} ({method_name})")
+                        return audio_start, method_func, detected
 
         print(f"  ❌ 恢复模式失败：未能定位有效的音频起始位置")
         return None, None, None
@@ -253,9 +272,10 @@ class NCMUniversalDecoder:
                 if image_size > 50 * 1024 * 1024:
                     return False, 'invalid_struct'
 
-                # 计算音频起始位置：8(header) + 2 + 4 + key_length
-                #                  + 4 + meta_length + 4 + 5 + 4 + image_size
-                audio_start = 27 + key_length + meta_length + image_size
+                # 计算音频起始位置：8(header) + 2(gap) + 4(keylen) + key_length
+                #   + 4(metalen) + meta_length + 4(CRC) + 5(gap) + 4(imglen) + image_size
+                #   = 31 + key_length + meta_length + image_size
+                audio_start = 31 + key_length + meta_length + image_size
 
                 # 检查音频起始位置是否在文件范围内
                 if audio_start >= file_size:
@@ -438,37 +458,39 @@ class NCMUniversalDecoder:
                         print(f"    已保存调试文件: {debug_file}")
                         return False
 
-                    # 恢复模式成功：用新参数重新读取测试数据
+                    # 恢复模式成功：用新参数继续解码
                     audio_start = rec_offset
                     successful_method = rec_method
                     output_format = rec_format
-
-                    f.seek(audio_start)
-                    test_data = f.read(1024)
-                    key_box_copy = bytearray(key_box_original)
-                    decrypted_test = successful_method(key_box_copy, test_data)
                     print(f"  ✅ 恢复成功，继续解码...")
 
                 output_file = output_dir / f"{ncm_path.stem}.{output_format}"
 
+                # 从正确的音频起点开始解密整段音频
+                f.seek(audio_start)
+
                 with open(output_file, 'wb') as out:
-                    out.write(decrypted_test)
-
-                    f.seek(audio_start + 1024)
-                    key_box_copy = bytearray(key_box_original)
-
-                    total_size = len(decrypted_test)
-                    while True:
-                        chunk = f.read(0x8000)
-                        if not chunk:
-                            break
-
-                        decrypted_chunk = successful_method(key_box_copy, chunk)
-                        out.write(decrypted_chunk)
-                        total_size += len(decrypted_chunk)
-
-                        if total_size % (1024 * 1024 * 10) == 0:
-                            print(f"    已处理: {total_size / 1024 / 1024:.1f} MB")
+                    if successful_method is self.try_decode_method2:
+                        # method2 是有状态 RC4，且本实现每次调用重置 i/j 指针，
+                        # 无法正确分块——必须整段一次性解密。
+                        audio_data = f.read()
+                        out.write(successful_method(bytearray(key_box_original), audio_data))
+                        total_size = len(audio_data)
+                    else:
+                        # method1/method3 无状态、keystream 周期 256，
+                        # chunk(0x8000) 是 256 的整数倍，分块解密与整段等价。
+                        key_box_copy = bytearray(key_box_original)
+                        total_size = 0
+                        next_report = 10 * 1024 * 1024  # 每 10MB 报告一次进度
+                        while True:
+                            chunk = f.read(0x8000)
+                            if not chunk:
+                                break
+                            out.write(successful_method(key_box_copy, chunk))
+                            total_size += len(chunk)
+                            if total_size >= next_report:
+                                print(f"    已处理: {total_size / 1024 / 1024:.1f} MB")
+                                next_report += 10 * 1024 * 1024
 
                 print(f"  ✅ 成功！输出: {output_file}")
                 print(f"     大小: {total_size / 1024 / 1024:.2f} MB")

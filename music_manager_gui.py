@@ -16,6 +16,9 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 
 
 class MusicManagerGUI:
+    # 脚本所在目录（以本文件为基准），保证从任意目录启动 GUI 都能找到脚本
+    SCRIPT_DIR = Path(__file__).resolve().parent
+
     def __init__(self, root):
         self.root = root
         self.root.title("网易云音乐管理器 v2.1")
@@ -51,7 +54,7 @@ class MusicManagerGUI:
 
         missing = []
         for script in required_scripts:
-            if not Path(script).exists():
+            if not (self.SCRIPT_DIR / script).exists():
                 missing.append(script)
 
         if missing:
@@ -341,7 +344,9 @@ class MusicManagerGUI:
     def run_script(self, script_name, args, log_widget):
         """运行外部Python脚本"""
         try:
-            cmd = [sys.executable, script_name] + args
+            # 用脚本的绝对路径，保证从任意工作目录启动 GUI 都能执行
+            script_path = str(self.SCRIPT_DIR / script_name)
+            cmd = [sys.executable, script_path] + args
 
             self.log_message(log_widget, f"执行命令: {' '.join(cmd)}")
             self.update_status(f"正在运行 {script_name}...")
@@ -352,7 +357,9 @@ class MusicManagerGUI:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                universal_newlines=True
+                universal_newlines=True,
+                encoding="utf-8",       # 脚本输出含中文/emoji，固定 UTF-8 避免 Windows GBK 崩溃
+                errors="replace",
             )
 
             for line in iter(self.current_process.stdout.readline, ''):
@@ -433,9 +440,10 @@ class MusicManagerGUI:
         if self.tag_overwrite.get():
             args.append('--overwrite')
 
+        # 始终传递专辑字段：非空则写入该名，清空则传空串（脚本据此不写专辑），
+        # 让用户清空输入框能真正实现"不写专辑"
         album = self.tag_album.get()
-        if album:
-            args.extend(['--default-album', album])
+        args.extend(['--default-album', album])
 
         if self.tag_dryrun.get():
             args.append('--dry-run')

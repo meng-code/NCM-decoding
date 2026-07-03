@@ -119,13 +119,16 @@ def merge_lyrics(lrc: str, tlrc: str = None) -> str:
     def parse_lrc(text):
         lines = {}
         for line in text.split('\n'):
-            # 匹配时间标签 [mm:ss.xx] 或 [mm:ss]
-            match = re.match(r'\[(\d{2}):(\d{2})(?:\.(\d{2}))?\](.*)', line)
+            # 匹配时间标签，兼容 1-2 位分钟、1-3 位毫秒/厘秒：
+            # [mm:ss] / [mm:ss.xx] / [mm:ss.xxx] / [m:ss.x] 等
+            match = re.match(r'\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\](.*)', line)
             if match:
                 minutes = int(match.group(1))
                 seconds = int(match.group(2))
-                milliseconds = int(match.group(3)) if match.group(3) else 0
-                timestamp = minutes * 60000 + seconds * 1000 + milliseconds * 10
+                # 按小数位数换算成毫秒：1位=十分之一秒(×100)、2位=厘秒(×10)、3位=毫秒(×1)
+                frac = match.group(3) or ""
+                milliseconds = int(frac.ljust(3, '0')) if frac else 0
+                timestamp = minutes * 60000 + seconds * 1000 + milliseconds
                 content = match.group(4).strip()
                 if content:  # 只保存有内容的行
                     lines[timestamp] = content
@@ -138,14 +141,14 @@ def merge_lyrics(lrc: str, tlrc: str = None) -> str:
     # 合并歌词
     merged = []
 
-    # 保留原始文件的元数据（如[ar:], [ti:]等）
+    # 保留原始文件的元数据（如[ar:], [ti:]等），排除时间轴行（1-3位分钟）
     for line in lrc.split('\n'):
-        if line.startswith('[') and not re.match(r'\[\d{2}:\d{2}', line):
+        if line.startswith('[') and not re.match(r'\[\d{1,3}:\d{2}', line):
             merged.append(line)
 
-    # 合并时间轴歌词
+    # 合并时间轴歌词（输出统一为 3 位毫秒精度）
     for timestamp in sorted(lrc_lines.keys()):
-        time_str = f"[{timestamp // 60000:02d}:{(timestamp % 60000) // 1000:02d}.{(timestamp % 1000) // 10:02d}]"
+        time_str = f"[{timestamp // 60000:02d}:{(timestamp % 60000) // 1000:02d}.{timestamp % 1000:03d}]"
         original = lrc_lines[timestamp]
 
         # 检查是否有对应的翻译
